@@ -63,31 +63,21 @@
 - Node.js >= 18.0.0
 - npm >= 9.0.0
 
-### 安装步骤
+### 🚀 零配置启动
 
 ```bash
 # 1. 克隆项目
 git clone <your-repo-url>
 cd trae02airead
 
-# 2. 安装依赖
+# 2. 安装依赖并启动
 npm install
-
-# 3. 配置环境变量
-cp .env.example .env
-
-# 4. 生成加密密钥（64 位十六进制字符）
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# 5. 编辑 .env 文件，填入 ENCRYPTION_KEY
-# PORT=3000
-# ENCRYPTION_KEY=生成的密钥
-
-# 6. 启动服务
 npm start
 ```
 
-访问 http://localhost:3000 即可使用。
+然后打开 http://localhost:3000 即可使用！
+
+> **零配置**：所有配置都有默认值，无需手动配置即可启动。所有密钥（API Key）都通过 UI 填写，无需写在配置文件中。
 
 ### 开发模式
 
@@ -95,25 +85,28 @@ npm start
 npm run dev
 ```
 
-## 配置说明
+## 注意事项
 
-### 环境变量 (.env)
+1. 上传文件最大 50MB
+2. 流式输出使用 SSE，需浏览器支持
+3. 建议定期备份密钥和数据文件
+4. 如需持久化保存 API 密钥，可配置 `ENCRYPTION_KEY` 环境变量（固定密钥，重启后不会丢失）
+
+### 环境变量配置（可选）
+
+如需配置，可在 `.env` 文件中设置：
 
 ```env
+# 固定加密密钥（可选，不配置则每次启动自动生成）
+ENCRYPTION_KEY=your_64_char_hex_key
+
+# AI 提供商 API Key（可选，也可直接在 UI 中配置）
+ZHIPU_API_KEY=your_zhipu_key
+SILICONFLOW_API_KEY=your_siliconflow_key
+CUSTOM_API_KEY=your_custom_key
+
 # 服务端口（默认 3000）
 PORT=3000
-
-# 加密密钥（必填，64 位十六进制字符）
-ENCRYPTION_KEY=your_64_char_hex_encryption_key
-
-# 智谱 AI API Key（可选）
-ZHIPU_API_KEY=your_zhipu_api_key
-
-# 硅基流动 API Key（可选）
-SILICONFLOW_API_KEY=your_siliconflow_api_key
-
-# 默认 AI 模型（可选）
-AI_MODEL=glm-4.5-air
 ```
 
 ### AI 提供商配置
@@ -133,9 +126,11 @@ AI_MODEL=glm-4.5-air
    - **API 地址**：完整的聊天补全 API 地址
    - **默认模型**：如 `gpt-4`、`deepseek-chat`
    - **可选模型列表**（选填）：JSON 格式
-   - **API 密钥**：提供商的 API Key
+   - **API 密钥**：提供商的 API Key（也可通过环境变量 `CUSTOM_API_KEY` 配置）
 3. 点击"添加提供商"保存
 4. 添加后可选择该提供商并切换不同模型
+
+> **提示**：自定义提供商的 API 密钥也可以通过环境变量 `CUSTOM_API_KEY` 配置，这样无需在 UI 中输入。
 
 ```json
 // 可选模型列表示例

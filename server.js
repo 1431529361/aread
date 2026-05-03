@@ -900,7 +900,13 @@ app.post('/api/ask', async (req, res) => {
         const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
         apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
         if (apiKey) {
-            console.log(`[DEBUG] 从环境变量获取密钥: ${envKeyMap[providerId]}`);
+            console.log(`[DEBUG] 从环境变量获取密钥: ${envKeyMap[providerId] || 'AI_API_KEY'}`);
+        }
+        if (!apiKey && providerId.startsWith('custom')) {
+            apiKey = process.env.CUSTOM_API_KEY;
+            if (apiKey) {
+                console.log(`[DEBUG] 从环境变量获取自定义提供商密钥: CUSTOM_API_KEY`);
+            }
         }
     }
 
@@ -956,6 +962,9 @@ app.post('/api/ask-stream', async (req, res) => {
     if (!apiKey) {
         const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
         apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
+        if (!apiKey && providerId.startsWith('custom')) {
+            apiKey = process.env.CUSTOM_API_KEY;
+        }
     }
 
     if (!apiKey) {
