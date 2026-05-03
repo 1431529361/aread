@@ -225,8 +225,8 @@ trae02airead/
 4. **敏感文件**：以下文件已加入 `.gitignore`：
    - `.env`
    - `.api_keys.json`
-   - `.books_meta.json`
    - `.custom_providers.json`
+   - `.books_meta.json`
    - `.users.json`
    - `books/`
 

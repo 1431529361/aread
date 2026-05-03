@@ -9,6 +9,9 @@ node_modules/
 # API密钥存储
 .api_keys.json
 
+# 自定义提供商
+.custom_providers.json
+
 # 用户数据
 .users.json
 .books_meta.json
