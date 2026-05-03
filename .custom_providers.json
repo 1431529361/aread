@@ -1,0 +1,14 @@
+{
+  "custom-provider": {
+    "name": "阿里云百炼",
+    "apiEndpoint": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "defaultModel": "MiniMax-M2.5",
+    "models": [
+      {
+        "id": "kimi-k2.6",
+        "name": "[Bailian] kimi2.6"
+      }
+    ],
+    "createdAt": "2026-05-03T05:50:40.714Z"
+  }
+}

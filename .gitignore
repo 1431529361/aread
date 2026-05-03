@@ -1,0 +1,43 @@
+# 依赖包
+node_modules/
+
+# 环境变量和密钥
+.env
+.env.local
+.env.*.local
+
+# API密钥存储
+.api_keys.json
+
+# 用户数据
+.users.json
+.books_meta.json
+
+# 用户上传的书籍
+books/
+
+# 日志文件
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.tmp
+*.temp
+
+# 上传临时文件
+uploads/
+tmp/
