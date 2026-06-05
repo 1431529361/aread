@@ -25,7 +25,10 @@ if (!fs.existsSync(BOOKS_DIR)) {
     fs.mkdirSync(BOOKS_DIR, { recursive: true });
 }
 
-const db = initDB();
+let db;
+
+async function startServer() {
+    db = await initDB();
 
 app.use(cors());
 app.use(express.json());
@@ -589,8 +592,10 @@ app.post('/api/ask', async (req, res) => {
     }
 
     const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId);
-    const storedKeys = loadStoredKeys();
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
+    const storedKeys = {};
+    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
     
     console.log(`[DEBUG] 请求提供商: ${providerId}`);
     console.log(`[DEBUG] 存储的密钥结构:`, Object.keys(storedKeys));
@@ -845,10 +850,17 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 AI阅读助手服务器已启动`);
-    console.log(`📖 访问地址: http://localhost:${PORT}`);
-    console.log(`📚 书籍存储目录: ${BOOKS_DIR}`);
-    console.log(`📁 支持格式: ${ALLOWED_EXTENSIONS.join(', ')}`);
-    console.log(`⚖️ 文件大小限制: ${formatFileSize(MAX_FILE_SIZE)}`);
+    app.listen(PORT, () => {
+        console.log(`🚀 AI阅读助手服务器已启动`);
+        console.log(`📖 访问地址: http://localhost:${PORT}`);
+        console.log(`📚 书籍存储目录: ${BOOKS_DIR}`);
+        console.log(`📁 支持格式: ${ALLOWED_EXTENSIONS.join(', ')}`);
+        console.log(`⚖️ 文件大小限制: ${formatFileSize(MAX_FILE_SIZE)}`);
+    });
+    
+}
+
+startServer().catch(err => {
+    console.error("Server startup failed:", err);
+    process.exit(1);
 });
