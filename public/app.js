@@ -294,6 +294,7 @@ class AIReadingAssistant {
             if (models.length > 0) {
                 this.modelSelectGroup.style.display = 'block';
                 const savedModel = this.currentModel || providerInfo.defaultModel;
+                this.currentModel = savedModel;
                 this.modelSelect.innerHTML = models.map(m =>
                     `<option value="${m.id}" ${m.id === savedModel ? 'selected' : ''}>${m.name}</option>`
                 ).join('');
@@ -331,8 +332,75 @@ class AIReadingAssistant {
             }
         }
 
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        if (apiKeyInput) apiKeyInput.value = '';
+
         this.renderCustomProvidersList();
+        this.renderCustomModelTags(provider);
         this.checkApiKeyStatus();
+    }
+
+    getCustomModels(providerId) {
+        try {
+            return JSON.parse(localStorage.getItem(`customModels_${providerId}`)) || [];
+        } catch { return []; }
+    }
+
+    saveCustomModels(providerId, models) {
+        localStorage.setItem(`customModels_${providerId}`, JSON.stringify(models));
+    }
+
+    addCustomModel() {
+        const input = document.getElementById('customModelId');
+        const modelId = input.value.trim();
+        if (!modelId) { this.showToast('请输入模型ID'); return; }
+
+        const providerId = this.currentProvider;
+        const customModels = this.getCustomModels(providerId);
+        if (customModels.some(m => m.id === modelId)) {
+            this.showToast('该模型已存在');
+            return;
+        }
+        const providerInfo = this.providers.find(p => p.id === providerId);
+        const builtInModels = providerInfo?.models || [];
+        if (builtInModels.some(m => m.id === modelId) || providerInfo?.defaultModel === modelId) {
+            this.showToast('该模型已在默认列表中');
+            return;
+        }
+
+        customModels.push({ id: modelId, name: modelId });
+        this.saveCustomModels(providerId, customModels);
+        input.value = '';
+        this.showToast(`已添加模型: ${modelId}`);
+        this.switchProvider(providerId);
+    }
+
+    removeCustomModel(providerId, modelId) {
+        let customModels = this.getCustomModels(providerId);
+        customModels = customModels.filter(m => m.id !== modelId);
+        this.saveCustomModels(providerId, customModels);
+        if (this.currentModel === modelId) {
+            const providerInfo = this.providers.find(p => p.id === providerId);
+            this.currentModel = providerInfo?.defaultModel || null;
+            localStorage.setItem(`selectedModel_${providerId}`, this.currentModel || '');
+        }
+        this.switchProvider(providerId);
+    }
+
+    renderCustomModelTags(providerId) {
+        const container = document.getElementById('customModelTags');
+        if (!container) return;
+        const customModels = this.getCustomModels(providerId);
+        if (customModels.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = customModels.map(m =>
+            `<span class="model-tag">${this.escapeHtml(m.name)}<button class="tag-remove" data-model-id="${this.escapeHtml(m.id)}" title="删除">×</button></span>`
+        ).join('');
+        container.querySelectorAll('.tag-remove').forEach(btn => {
+            btn.addEventListener('click', () => this.removeCustomModel(providerId, btn.dataset.modelId));
+        });
     }
 
     getProviderModels(providerInfo) {
@@ -350,6 +418,13 @@ class AIReadingAssistant {
                 }
             });
         }
+        const customModels = this.getCustomModels(providerInfo.id);
+        customModels.forEach(m => {
+            if (!addedIds.has(m.id)) {
+                models.push(m);
+                addedIds.add(m.id);
+            }
+        });
         return models;
     }
 
@@ -1021,6 +1096,11 @@ class AIReadingAssistant {
         document.getElementById('closeModalBtn').addEventListener('click', () => this.hideModal());
         document.getElementById('modalCancelBtn').addEventListener('click', () => this.hideModal());
         document.getElementById('modalSaveBtn').addEventListener('click', () => this.saveApiKeyFromModal());
+
+        const addModelBtn = document.getElementById('addModelBtn');
+        if (addModelBtn) addModelBtn.addEventListener('click', () => this.addCustomModel());
+        const customModelIdInput = document.getElementById('customModelId');
+        if (customModelIdInput) customModelIdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.addCustomModel(); } });
 
         this.apiKeyModal.addEventListener('click', (e) => {
             if (e.target === this.apiKeyModal) this.hideModal();

@@ -165,6 +165,12 @@ const PROVIDERS = {
         name: '智谱AI',
         apiEndpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
         defaultModel: 'glm-4.5-air',
+        models: [
+            { id: 'glm-4.5-air', name: 'GLM-4.5-Air' },
+            { id: 'glm-4-flash', name: 'GLM-4-Flash' },
+            { id: 'glm-4-plus', name: 'GLM-4-Plus' },
+            { id: 'glm-4-long', name: 'GLM-4-Long' }
+        ],
         validateEndpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
         validateModel: 'glm-4-flash'
     },
@@ -201,6 +207,31 @@ function getAllProviders(userId) {
 function getProviderConfig(provider, userId) {
     const allProviders = getAllProviders(userId);
     return allProviders[provider] || allProviders.zhipu;
+}
+
+async function validateAPIKey(apiKey, providerConfig) {
+    try {
+        const endpoint = providerConfig.validateEndpoint || providerConfig.apiEndpoint;
+        const model = providerConfig.validateModel || providerConfig.defaultModel;
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model,
+                messages: [{ role: 'user', content: 'Hi' }],
+                max_tokens: 1
+            }),
+            signal: AbortSignal.timeout(15000)
+        });
+        if (response.status === 401 || response.status === 403) return false;
+        return response.ok || response.status === 400;
+    } catch (error) {
+        console.error('验证API密钥失败:', error.message);
+        return false;
+    }
 }
 
 // ==================== API Key Routes ====================
@@ -585,7 +616,7 @@ app.put('/api/books/:id/progress', (req, res) => {
 });
 
 app.post('/api/ask', async (req, res) => {
-    const { text, question, bookName, provider } = req.body;
+    const { text, question, bookName, provider, model: clientModel } = req.body;
     
     if (!text || !question) {
         return res.status(400).json({ error: '请提供选中的文本和问题' });
@@ -635,7 +666,7 @@ app.post('/api/ask', async (req, res) => {
     }
 
     try {
-        const { answer, model } = await callAI(apiKey, text, question, bookName, providerConfig);
+        const { answer, model } = await callAI(apiKey, text, question, bookName, providerConfig, clientModel);
         res.json({ 
             answer,
             model,
@@ -664,8 +695,10 @@ app.post('/api/ask-stream', async (req, res) => {
     }
 
     const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId);
-    const storedKeys = loadStoredKeys();
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
+    const storedKeys = {};
+    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
     
     const keyData = storedKeys[providerId] || (providerId === 'zhipu' && storedKeys.encryptedApiKey ? storedKeys : null);
     let apiKey = null;
@@ -793,9 +826,9 @@ app.post('/api/ask-stream', async (req, res) => {
     }
 });
 
-async function callAI(apiKey, selectedText, question, bookName, providerConfig) {
+async function callAI(apiKey, selectedText, question, bookName, providerConfig, clientModel) {
     const apiEndpoint = providerConfig.apiEndpoint;
-    const model = process.env.AI_MODEL || providerConfig.defaultModel;
+    const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
     const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
 
     const controller = new AbortController();

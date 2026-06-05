@@ -1073,6 +1073,59 @@ body {
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
 }
 
+.custom-model-input {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    align-items: center;
+}
+
+.custom-model-input input {
+    flex: 1;
+    padding: 0.5rem 0.8rem;
+    font-size: 0.85rem;
+}
+
+.btn-sm {
+    padding: 0.5rem 1rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
+
+.custom-model-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+}
+
+.model-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.6rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.model-tag .tag-remove {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0 0.15rem;
+    border: none;
+    background: none;
+    transition: color 0.15s;
+}
+
+.model-tag .tag-remove:hover {
+    color: #e53e3e;
+}
+
 .api-key-status {
     padding: 1.5rem;
     background: var(--bg-secondary);
