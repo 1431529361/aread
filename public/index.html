@@ -23,6 +23,10 @@
                         <span class="settings-text">设置</span>
                     </button>
                 </nav>
+                <div class="user-info" id="userInfo" style="display:none">
+                    <span class="username-display" id="displayUsername"></span>
+                    <button class="logout-btn" id="logoutBtn">退出</button>
+                </div>
             </div>
         </header>
 
@@ -385,6 +389,36 @@
                         <button class="btn btn-primary" id="modalSaveBtn">保存并验证</button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="auth-overlay" id="authOverlay">
+            <div class="auth-card">
+                <h1 class="auth-logo">📚 AI阅读助手</h1>
+                <div class="auth-tabs">
+                    <button class="auth-tab active" data-tab="login">登录</button>
+                    <button class="auth-tab" data-tab="register">注册</button>
+                </div>
+                <form class="auth-form" id="authForm">
+                    <div class="form-group">
+                        <label for="authUsername">用户名</label>
+                        <input type="text" id="authUsername" placeholder="请输入用户名" required minlength="1" autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="authPassword">密码</label>
+                        <input type="password" id="authPassword" placeholder="请输入密码（至少6位）" required minlength="6" autocomplete="current-password">
+                    </div>
+                    <div class="form-group remember-me-group" id="rememberMeGroup" style="display:none">
+                        <label class="remember-me-label">
+                            <input type="checkbox" id="rememberMe"> 30天内自动登录
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary auth-submit" id="authSubmitBtn">
+                        <span class="btn-text">登录</span>
+                        <span class="btn-loading">处理中...</span>
+                    </button>
+                </form>
+                <p class="auth-error" id="authError"></p>
             </div>
         </div>
 

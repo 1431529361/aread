@@ -1,7 +1,7 @@
-# 依赖包
+# 依赖�?
 node_modules/
 
-# 环境变量和密钥
+# 环境变量和密�?
 .env
 .env.local
 .env.*.local
@@ -16,7 +16,7 @@ node_modules/
 .users.json
 .books_meta.json
 
-# 用户上传的书籍
+# 用户上传的书�?
 books/
 
 # 日志文件

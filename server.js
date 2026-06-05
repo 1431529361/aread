@@ -1,24 +1,22 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
-const cookieParser = require('cookie-parser');
 const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 require('dotenv').config();
+
+const { initDB, getDB } = require('./database');
+const { authMiddleware, registerHandler, loginHandler, meHandler } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
-const KEY_STORAGE_PATH = path.join(__dirname, '.api_keys.json');
 const BOOKS_DIR = path.join(__dirname, 'books');
-const BOOKS_META_PATH = path.join(__dirname, '.books_meta.json');
-const USERS_PATH = path.join(__dirname, '.users.json');
-const CUSTOM_PROVIDERS_PATH = path.join(__dirname, '.custom_providers.json');
 
 const ALLOWED_EXTENSIONS = ['.txt', '.pdf', '.epub', '.mobi'];
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -27,10 +25,18 @@ if (!fs.existsSync(BOOKS_DIR)) {
     fs.mkdirSync(BOOKS_DIR, { recursive: true });
 }
 
+const db = initDB();
+
 app.use(cors());
 app.use(express.json());
-app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.post('/api/auth/register', registerHandler);
+app.post('/api/auth/login', loginHandler);
+
+app.use('/api', authMiddleware);
+
+app.get('/api/auth/me', meHandler);
 
 function encrypt(text) {
     const iv = crypto.randomBytes(16);
@@ -57,107 +63,6 @@ function decrypt(encryptedData) {
     }
 }
 
-function getUserId(req) {
-    let userId = req.cookies.userId;
-    if (!userId) {
-        userId = uuidv4();
-    }
-    return userId;
-}
-
-function setUserIdCookie(res, userId) {
-    res.cookie('userId', userId, {
-        maxAge: 365 * 24 * 60 * 60 * 1000,
-        httpOnly: true,
-        sameSite: 'lax'
-    });
-}
-
-function loadStoredKeys() {
-    try {
-        if (fs.existsSync(KEY_STORAGE_PATH)) {
-            const data = fs.readFileSync(KEY_STORAGE_PATH, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (error) {
-        console.error('加载密钥失败:', error);
-    }
-    return {};
-}
-
-function saveStoredKeys(keys) {
-    try {
-        fs.writeFileSync(KEY_STORAGE_PATH, JSON.stringify(keys, null, 2));
-        return true;
-    } catch (error) {
-        console.error('保存密钥失败:', error);
-        return false;
-    }
-}
-
-function loadBooksMeta() {
-    try {
-        if (fs.existsSync(BOOKS_META_PATH)) {
-            const data = fs.readFileSync(BOOKS_META_PATH, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (error) {
-        console.error('加载书籍元数据失败:', error);
-    }
-    return {};
-}
-
-function saveBooksMeta(meta) {
-    try {
-        fs.writeFileSync(BOOKS_META_PATH, JSON.stringify(meta, null, 2));
-        return true;
-    } catch (error) {
-        console.error('保存书籍元数据失败:', error);
-        return false;
-    }
-}
-
-function loadCustomProviders() {
-    try {
-        if (fs.existsSync(CUSTOM_PROVIDERS_PATH)) {
-            const data = fs.readFileSync(CUSTOM_PROVIDERS_PATH, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (error) {
-        console.error('加载自定义提供商失败:', error);
-    }
-    return {};
-}
-
-function saveCustomProviders(providers) {
-    try {
-        fs.writeFileSync(CUSTOM_PROVIDERS_PATH, JSON.stringify(providers, null, 2));
-        return true;
-    } catch (error) {
-        console.error('保存自定义提供商失败:', error);
-        return false;
-    }
-}
-
-function getAllProviders() {
-    const customProviders = loadCustomProviders();
-    const allProviders = { ...PROVIDERS };
-    
-    for (const [key, value] of Object.entries(customProviders)) {
-        allProviders[key] = {
-            name: value.name,
-            apiEndpoint: value.apiEndpoint,
-            defaultModel: value.defaultModel,
-            models: value.models || null,
-            validateEndpoint: value.apiEndpoint,
-            validateModel: value.defaultModel,
-            isCustom: true
-        };
-    }
-    
-    return allProviders;
-}
-
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -172,95 +77,64 @@ function getFileExtension(filename) {
 
 function readTextFileWithEncoding(filePath) {
     const buffer = fs.readFileSync(filePath);
-    
+
     const detected = jschardet.detect(buffer);
     let encoding = detected.encoding || 'utf-8';
-    
+
     const encodingMap = {
-        'GB2312': 'gbk',
-        'GB18030': 'gbk',
-        'gb2312': 'gbk',
-        'gb18030': 'gbk',
-        'BIG5': 'big5',
-        'big5': 'big5',
-        'UTF-8': 'utf-8',
-        'utf-8': 'utf-8',
-        'UTF-16LE': 'utf-16le',
-        'UTF-16BE': 'utf-16be',
-        'ascii': 'utf-8',
-        'ASCII': 'utf-8'
+        'GB2312': 'gbk', 'GB18030': 'gbk', 'gb2312': 'gbk', 'gb18030': 'gbk',
+        'BIG5': 'big5', 'big5': 'big5',
+        'UTF-8': 'utf-8', 'utf-8': 'utf-8',
+        'UTF-16LE': 'utf-16le', 'UTF-16BE': 'utf-16be',
+        'ascii': 'utf-8', 'ASCII': 'utf-8'
     };
-    
+
     encoding = encodingMap[encoding] || encoding;
-    
+
     if (encoding.toLowerCase() === 'utf-8' || encoding.toLowerCase() === 'utf8') {
-        const hasBOM = buffer.length >= 3 && 
-            buffer[0] === 0xEF && 
-            buffer[1] === 0xBB && 
-            buffer[2] === 0xBF;
-        
+        const hasBOM = buffer.length >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF;
         if (hasBOM) {
             return buffer.slice(3).toString('utf-8');
         }
-        
         try {
             const content = buffer.toString('utf-8');
-            const replacementChar = content.indexOf('\uFFFD');
-            if (replacementChar === -1) {
-                return content;
-            }
-        } catch (e) {
-        }
+            if (content.indexOf('\uFFFD') === -1) return content;
+        } catch (e) {}
     }
-    
+
     try {
         const content = iconv.decode(buffer, encoding);
         return content;
     } catch (error) {
-        console.error('解码失败，尝试其他编码:', error);
-        
         const fallbackEncodings = ['utf-8', 'gbk', 'gb18030', 'big5', 'utf-16le'];
         for (const enc of fallbackEncodings) {
             try {
                 const content = iconv.decode(buffer, enc);
-                const hasReplacement = content.indexOf('\uFFFD') !== -1;
-                if (!hasReplacement) {
-                    console.log(`使用 ${enc} 编码成功解码`);
-                    return content;
-                }
-            } catch (e) {
-                continue;
-            }
+                if (content.indexOf('\uFFFD') === -1) return content;
+            } catch (e) { continue; }
         }
-        
         return buffer.toString('utf-8');
     }
 }
 
 function validateFile(file) {
     const ext = getFileExtension(file.originalname);
-    
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
         return { valid: false, error: `不支持的文件格式。支持的格式: ${ALLOWED_EXTENSIONS.join(', ')}` };
     }
-    
     if (file.size > MAX_FILE_SIZE) {
         return { valid: false, error: `文件大小超过限制。最大允许: ${formatFileSize(MAX_FILE_SIZE)}` };
     }
-    
-    const dangerousPatterns = [/<script/i, /javascript:/i, /on\w+=/i];
     return { valid: true };
 }
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const userId = getUserId(req);
+        const userId = req.user.id;
         const userDir = path.join(BOOKS_DIR, userId);
-        
         if (!fs.existsSync(userDir)) {
             fs.mkdirSync(userDir, { recursive: true });
         }
-        
         cb(null, userDir);
     },
     filename: (req, file, cb) => {
@@ -304,69 +178,82 @@ const PROVIDERS = {
     }
 };
 
-function getProviderConfig(provider) {
-    const allProviders = getAllProviders();
+function getAllProviders(userId) {
+    const customRows = db.prepare('SELECT * FROM custom_providers WHERE user_id = ?').all(userId);
+    const allProviders = { ...PROVIDERS };
+    for (const row of customRows) {
+        allProviders[row.id] = {
+            name: row.name,
+            apiEndpoint: row.api_endpoint,
+            defaultModel: row.default_model,
+            models: row.models ? JSON.parse(row.models) : null,
+            validateEndpoint: row.api_endpoint,
+            validateModel: row.default_model,
+            isCustom: true
+        };
+    }
+    return allProviders;
+}
+
+function getProviderConfig(provider, userId) {
+    const allProviders = getAllProviders(userId);
     return allProviders[provider] || allProviders.zhipu;
 }
 
+// ==================== API Key Routes ====================
+
 app.get('/api/key/status', (req, res) => {
-    const storedKeys = loadStoredKeys();
-    const allProviders = getAllProviders();
-    
+    const rows = db.prepare('SELECT provider, masked_key, last_updated FROM api_keys WHERE user_id = ?').all(req.user.id);
+    const storedKeys = {};
+    for (const r of rows) {
+        storedKeys[r.provider] = { hasKey: true, maskedKey: r.masked_key, lastUpdated: r.last_updated };
+    }
+
+    const allProviders = getAllProviders(req.user.id);
     const providers = {};
-    for (const [key, value] of Object.entries(allProviders)) {
-        // 兼容旧格式（智谱密钥存在根级别）
-        let keyData = storedKeys[key];
-        if (!keyData && key === 'zhipu' && storedKeys.encryptedApiKey) {
-            keyData = storedKeys;
-        }
+    for (const [key] of Object.entries(allProviders)) {
+        const keyData = storedKeys[key];
         providers[key] = {
-            hasKey: !!keyData?.encryptedApiKey,
+            hasKey: !!keyData?.hasKey,
             maskedKey: keyData?.maskedKey || null,
             lastUpdated: keyData?.lastUpdated || null
         };
     }
-    
+
     res.json({ providers });
 });
 
 app.post('/api/key/set', async (req, res) => {
     const { apiKey, provider } = req.body;
-    
+
     if (!apiKey || typeof apiKey !== 'string') {
         return res.status(400).json({ error: '请提供有效的API密钥' });
     }
-
     if (apiKey.length < 20) {
         return res.status(400).json({ error: 'API密钥长度不足，请检查密钥是否完整' });
     }
 
-    const providerConfig = getProviderConfig(provider);
+    const providerConfig = getProviderConfig(provider, req.user.id);
 
     try {
         const isValid = await validateAPIKey(apiKey, providerConfig);
-        
         if (!isValid) {
             return res.status(400).json({ error: 'API密钥验证失败，请检查密钥是否正确' });
         }
 
         const encryptedKey = encrypt(apiKey);
         const maskedKey = apiKey.substring(0, 8) + '****' + apiKey.substring(apiKey.length - 4);
-        
-        const storedKeys = loadStoredKeys();
-        storedKeys[provider] = {
-            encryptedApiKey: encryptedKey,
-            maskedKey: maskedKey,
-            lastUpdated: new Date().toISOString()
-        };
-        
-        saveStoredKeys(storedKeys);
-        
-        res.json({ 
-            success: true, 
-            message: `${providerConfig.name} API密钥设置成功`,
-            maskedKey: maskedKey
-        });
+
+        db.prepare(`
+            INSERT INTO api_keys (user_id, provider, encrypted_key, masked_key, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, provider) DO UPDATE SET
+                encrypted_key = excluded.encrypted_key,
+                masked_key = excluded.masked_key,
+                last_updated = excluded.last_updated
+        `).run(req.user.id, provider, encryptedKey, maskedKey, new Date().toISOString());
+
+        res.json({ success: true, message: `${providerConfig.name} API密钥设置成功`, maskedKey });
     } catch (error) {
         console.error('设置API密钥失败:', error);
         res.status(500).json({ error: '设置API密钥时发生错误' });
@@ -375,22 +262,17 @@ app.post('/api/key/set', async (req, res) => {
 
 app.post('/api/key/verify', async (req, res) => {
     const { apiKey, provider } = req.body;
-    const providerConfig = getProviderConfig(provider);
-    
+    const providerConfig = getProviderConfig(provider, req.user.id);
+
     if (!apiKey) {
-        const storedKeys = loadStoredKeys();
-        let keyData = storedKeys[provider];
-        if (provider === 'zhipu' && !keyData && storedKeys.encryptedApiKey) {
-            keyData = storedKeys;
-        }
-        if (!keyData?.encryptedApiKey) {
+        const row = db.prepare('SELECT encrypted_key FROM api_keys WHERE user_id = ? AND provider = ?').get(req.user.id, provider);
+        if (!row) {
             return res.json({ valid: false, error: '未设置API密钥' });
         }
-        const decryptedKey = decrypt(keyData.encryptedApiKey);
+        const decryptedKey = decrypt(row.encrypted_key);
         if (!decryptedKey) {
             return res.json({ valid: false, error: 'API密钥解密失败' });
         }
-        
         const isValid = await validateAPIKey(decryptedKey, providerConfig);
         return res.json({ valid: isValid });
     }
@@ -403,16 +285,11 @@ app.delete('/api/key', (req, res) => {
     const { provider } = req.body;
 
     try {
-        const storedKeys = loadStoredKeys();
         if (provider) {
-            delete storedKeys[provider];
+            db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?').run(req.user.id, provider);
         } else {
-            const allProviders = getAllProviders();
-            for (const key of Object.keys(allProviders)) {
-                delete storedKeys[key];
-            }
+            db.prepare('DELETE FROM api_keys WHERE user_id = ?').run(req.user.id);
         }
-        saveStoredKeys(storedKeys);
         res.json({ success: true, message: 'API密钥已删除' });
     } catch (error) {
         console.error('删除API密钥失败:', error);
@@ -420,8 +297,10 @@ app.delete('/api/key', (req, res) => {
     }
 });
 
+// ==================== Provider Routes ====================
+
 app.get('/api/providers', (req, res) => {
-    const allProviders = getAllProviders();
+    const allProviders = getAllProviders(req.user.id);
     const providerList = Object.entries(allProviders).map(([key, value]) => ({
         id: key,
         name: value.name,
@@ -432,26 +311,21 @@ app.get('/api/providers', (req, res) => {
     res.json({ providers: providerList });
 });
 
-function generateProviderId(name) {
+function generateProviderId(name, userId) {
     let baseId = name.toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-|-$/g, '')
         .substring(0, 30);
 
-    if (!baseId) {
-        baseId = 'custom-provider';
-    }
-
-    const customProviders = loadCustomProviders();
+    if (!baseId) baseId = 'custom-provider';
 
     let id = baseId;
     let counter = 2;
-    while (PROVIDERS[id] || customProviders[id]) {
+    while (PROVIDERS[id] || db.prepare('SELECT 1 FROM custom_providers WHERE id = ? AND user_id = ?').get(id, userId)) {
         id = `${baseId}-${counter}`;
         counter++;
     }
-
     return id;
 }
 
@@ -461,89 +335,55 @@ app.post('/api/providers', async (req, res) => {
     if (!name || !apiEndpoint || !defaultModel || !apiKey) {
         return res.status(400).json({ error: '请提供完整的提供商信息（name, apiEndpoint, defaultModel, apiKey）' });
     }
-
     if (apiKey.length < 20) {
         return res.status(400).json({ error: 'API密钥长度不足，请检查密钥是否完整' });
     }
 
     const idRegex = /^[a-z0-9_-]+$/;
-
-    const id = providedId
-        ? providedId.toLowerCase()
-        : generateProviderId(name);
+    const id = providedId ? providedId.toLowerCase() : generateProviderId(name, req.user.id);
 
     if (!idRegex.test(id)) {
         return res.status(400).json({ error: '提供商ID包含非法字符' });
     }
-
     if (PROVIDERS[id]) {
         return res.status(400).json({ error: '该提供商ID与内置提供商冲突，请修改名称或联系管理员' });
     }
 
-    const customProviders = loadCustomProviders();
-
-    if (customProviders[id]) {
+    const existing = db.prepare('SELECT 1 FROM custom_providers WHERE id = ? AND user_id = ?').get(id, req.user.id);
+    if (existing) {
         return res.status(400).json({ error: '已存在相同名称的提供商，请修改名称' });
     }
 
-    const providerData = {
-        name,
-        apiEndpoint,
-        defaultModel,
-        models: models || null,
-        createdAt: new Date().toISOString()
-    };
-
-    customProviders[id] = providerData;
-
-    if (!saveCustomProviders(customProviders)) {
-        return res.status(500).json({ error: '保存自定义提供商失败' });
-    }
-
-    // 验证并保存 API 密钥
     const tempProviderConfig = {
-        name,
-        apiEndpoint,
-        defaultModel,
-        validateEndpoint: apiEndpoint,
-        validateModel: defaultModel
+        name, apiEndpoint, defaultModel,
+        validateEndpoint: apiEndpoint, validateModel: defaultModel
     };
 
     try {
         const isValid = await validateAPIKey(apiKey, tempProviderConfig);
-
         if (!isValid) {
-            // 验证失败，回滚提供商添加
-            delete customProviders[id];
-            saveCustomProviders(customProviders);
             return res.status(400).json({ error: 'API密钥验证失败，请检查密钥和API地址是否正确' });
         }
 
+        const insertProvider = db.prepare('INSERT INTO custom_providers (id, user_id, name, api_endpoint, default_model, models, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        insertProvider.run(id, req.user.id, name, apiEndpoint, defaultModel, models ? JSON.stringify(models) : null, new Date().toISOString());
+
         const encryptedKey = encrypt(apiKey);
         const maskedKey = apiKey.substring(0, 8) + '****' + apiKey.substring(apiKey.length - 4);
-
-        const storedKeys = loadStoredKeys();
-        storedKeys[id] = {
-            encryptedApiKey: encryptedKey,
-            maskedKey: maskedKey,
-            lastUpdated: new Date().toISOString()
-        };
-        saveStoredKeys(storedKeys);
+        db.prepare(`
+            INSERT INTO api_keys (user_id, provider, encrypted_key, masked_key, last_updated)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, provider) DO UPDATE SET
+                encrypted_key = excluded.encrypted_key, masked_key = excluded.masked_key, last_updated = excluded.last_updated
+        `).run(req.user.id, id, encryptedKey, maskedKey, new Date().toISOString());
 
         res.json({
-            success: true,
-            message: '自定义提供商添加成功',
-            provider: {
-                id,
-                ...providerData,
-                isCustom: true
-            }
+            success: true, message: '自定义提供商添加成功',
+            provider: { id, name, api_endpoint: apiEndpoint, default_model: defaultModel, models: models || null, isCustom: true }
         });
     } catch (error) {
         console.error('验证自定义提供商API密钥失败:', error);
-        // 回滚提供商添加
-        delete customProviders[id];
-        saveCustomProviders(customProviders);
+        db.prepare('DELETE FROM custom_providers WHERE id = ? AND user_id = ?').run(id, req.user.id);
         res.status(500).json({ error: '验证API密钥时发生错误' });
     }
 });
@@ -552,143 +392,43 @@ app.put('/api/providers/:id', (req, res) => {
     const { id } = req.params;
     const { name, apiEndpoint, defaultModel, models } = req.body;
 
-    const customProviders = loadCustomProviders();
-
-    if (!customProviders[id]) {
+    const row = db.prepare('SELECT * FROM custom_providers WHERE id = ? AND user_id = ?').get(id, req.user.id);
+    if (!row) {
         return res.status(404).json({ error: '自定义提供商不存在' });
     }
 
-    if (name) customProviders[id].name = name;
-    if (apiEndpoint) customProviders[id].apiEndpoint = apiEndpoint;
-    if (defaultModel) customProviders[id].defaultModel = defaultModel;
-    if (models !== undefined) customProviders[id].models = models;
-    customProviders[id].updatedAt = new Date().toISOString();
+    db.prepare(`
+        UPDATE custom_providers SET name = ?, api_endpoint = ?, default_model = ?, models = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+    `).run(
+        name || row.name, apiEndpoint || row.api_endpoint, defaultModel || row.default_model,
+        models !== undefined ? (models ? JSON.stringify(models) : null) : row.models,
+        new Date().toISOString(), id, req.user.id
+    );
 
-    if (saveCustomProviders(customProviders)) {
-        res.json({
-            success: true,
-            message: '自定义提供商更新成功',
-            provider: {
-                id,
-                ...customProviders[id],
-                isCustom: true
-            }
-        });
-    } else {
-        res.status(500).json({ error: '保存自定义提供商失败' });
-    }
+    res.json({
+        success: true, message: '自定义提供商更新成功',
+        provider: { id, name: name || row.name, api_endpoint: apiEndpoint || row.api_endpoint, default_model: defaultModel || row.default_model, models: models !== undefined ? models : (row.models ? JSON.parse(row.models) : null), isCustom: true }
+    });
 });
 
 app.delete('/api/providers/:id', (req, res) => {
     const { id } = req.params;
-    const customProviders = loadCustomProviders();
 
-    if (!customProviders[id]) {
+    const row = db.prepare('SELECT 1 FROM custom_providers WHERE id = ? AND user_id = ?').get(id, req.user.id);
+    if (!row) {
         return res.status(404).json({ error: '自定义提供商不存在' });
     }
 
-    delete customProviders[id];
+    db.prepare('DELETE FROM custom_providers WHERE id = ? AND user_id = ?').run(id, req.user.id);
+    db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?').run(req.user.id, id);
 
-    // 同时删除该提供商的API密钥
-    const storedKeys = loadStoredKeys();
-    if (storedKeys[id]) {
-        delete storedKeys[id];
-        saveStoredKeys(storedKeys);
-    }
-
-    if (saveCustomProviders(customProviders)) {
-        res.json({ success: true, message: '自定义提供商已删除' });
-    } else {
-        res.status(500).json({ error: '删除自定义提供商失败' });
-    }
+    res.json({ success: true, message: '自定义提供商已删除' });
 });
 
-async function validateAPIKey(apiKey, providerConfig) {
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30000);
-
-        console.log(`[DEBUG] 验证API密钥: ${providerConfig.name}`);
-        console.log(`[DEBUG] 验证端点: ${providerConfig.validateEndpoint}`);
-        console.log(`[DEBUG] 验证模型: ${providerConfig.validateModel}`);
-        console.log(`[DEBUG] API密钥: ${apiKey.substring(0, 8)}****${apiKey.substring(apiKey.length - 4)}`);
-
-        const response = await fetch(providerConfig.validateEndpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: providerConfig.validateModel,
-                messages: [{ role: 'user', content: 'Hi' }],
-                max_tokens: 5
-            }),
-            signal: controller.signal
-        });
-
-        clearTimeout(timeout);
-        console.log(`[DEBUG] 验证响应状态: ${response.status}`);
-        
-        if (response.ok) {
-            console.log('[DEBUG] 验证成功');
-            return true;
-        }
-
-        const errorBody = await response.json().catch(() => null);
-        console.log(`[DEBUG] 错误响应:`, JSON.stringify(errorBody));
-        
-        // 400 可能是模型不存在或其他参数错误，但密钥有效
-        if (response.status === 400) {
-            if (errorBody && errorBody.message && errorBody.message.includes('key')) {
-                console.log('[DEBUG] 密钥无效（400且包含key错误）');
-                return false;
-            }
-            console.log('[DEBUG] 验证通过（400但不是密钥问题）');
-            return true;
-        }
-        
-        // 404 可能是模型不存在，尝试用通用模型重试
-        if (response.status === 404) {
-            console.log('[DEBUG] 验证时模型可能不存在，使用通用模型重试');
-            const retryController = new AbortController();
-            const retryTimeout = setTimeout(() => retryController.abort(), 30000);
-
-            const retryResponse = await fetch(providerConfig.validateEndpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
-                    model: 'gpt-3.5-turbo',
-                    messages: [{ role: 'user', content: 'Hi' }],
-                    max_tokens: 5
-                }),
-                signal: retryController.signal
-            });
-
-            clearTimeout(retryTimeout);
-            console.log(`[DEBUG] 重试响应状态: ${retryResponse.status}`);
-            return retryResponse.ok || retryResponse.status === 400;
-        }
-        
-        // 401 明确表示密钥无效
-        if (response.status === 401) {
-            console.log('[DEBUG] 密钥认证失败（401）');
-        }
-        
-        return false;
-    } catch (error) {
-        console.error('[DEBUG] 验证API密钥异常:', error.message);
-        return false;
-    }
-}
+// ==================== Book Routes ====================
 
 app.post('/api/books/upload', (req, res) => {
-    const userId = getUserId(req);
-    setUserIdCookie(res, userId);
-    
     upload.single('book')(req, res, (err) => {
         if (err) {
             if (err.code === 'LIMIT_FILE_SIZE') {
@@ -696,27 +436,25 @@ app.post('/api/books/upload', (req, res) => {
             }
             return res.status(400).json({ error: err.message });
         }
-        
+
         if (!req.file) {
             return res.status(400).json({ error: '请选择要上传的文件' });
         }
-        
+
         const validation = validateFile(req.file);
         if (!validation.valid) {
             fs.unlinkSync(req.file.path);
             return res.status(400).json({ error: validation.error });
         }
-        
+
         let originalName = req.file.originalname;
         try {
             originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-        } catch (e) {
-            console.log('文件名编码转换失败，使用原始文件名');
-        }
-        
+        } catch (e) {}
+
         const bookId = path.basename(req.file.filename, path.extname(req.file.filename));
         const ext = getFileExtension(originalName);
-        
+
         const bookMeta = {
             id: bookId,
             title: path.basename(originalName, ext),
@@ -726,125 +464,97 @@ app.post('/api/books/upload', (req, res) => {
             size: req.file.size,
             sizeFormatted: formatFileSize(req.file.size),
             uploadTime: new Date().toISOString(),
-            userId: userId,
+            userId: req.user.id,
             author: '未知',
             lastRead: null,
             readProgress: 0
         };
-        
-        const allBooks = loadBooksMeta();
-        if (!allBooks[userId]) {
-            allBooks[userId] = {};
-        }
-        allBooks[userId][bookId] = bookMeta;
-        saveBooksMeta(allBooks);
-        
-        res.json({
-            success: true,
-            message: '书籍上传成功',
-            book: bookMeta
-        });
+
+        db.prepare(`
+            INSERT INTO books_meta (id, user_id, title, filename, original_name, format, size, size_formatted, upload_time, author)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(bookId, req.user.id, bookMeta.title, req.file.filename, originalName, bookMeta.format, req.file.size, bookMeta.sizeFormatted, bookMeta.uploadTime, '未知');
+
+        res.json({ success: true, message: '书籍上传成功', book: bookMeta });
     });
 });
 
 app.get('/api/books', (req, res) => {
-    const userId = getUserId(req);
-    setUserIdCookie(res, userId);
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId] || {};
-    
-    const booksList = Object.values(userBooks).sort((a, b) => 
-        new Date(b.uploadTime) - new Date(a.uploadTime)
-    );
-    
+    const rows = db.prepare('SELECT * FROM books_meta WHERE user_id = ? ORDER BY upload_time DESC').all(req.user.id);
+    const booksList = rows.map(r => ({
+        id: r.id, title: r.title, filename: r.filename, original_name: r.original_name,
+        originalName: r.original_name, format: r.format, size: r.size, size_formatted: r.size_formatted,
+        sizeFormatted: r.size_formatted, upload_time: r.upload_time, uploadTime: r.upload_time,
+        author: r.author, last_read: r.last_read, lastRead: r.last_read,
+        read_progress: r.read_progress, readProgress: r.read_progress, userId: r.user_id
+    }));
     res.json({ books: booksList });
 });
 
 app.get('/api/books/:id', (req, res) => {
-    const userId = getUserId(req);
     const bookId = req.params.id;
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId];
-    
-    if (!userBooks || !userBooks[bookId]) {
+    const row = db.prepare('SELECT * FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, req.user.id);
+
+    if (!row) {
         return res.status(404).json({ error: '书籍不存在' });
     }
-    
-    const book = userBooks[bookId];
-    const filePath = path.join(BOOKS_DIR, userId, book.filename);
-    
+
+    const book = {
+        id: row.id, title: row.title, filename: row.filename, originalName: row.original_name,
+        format: row.format, size: row.size, sizeFormatted: row.size_formatted,
+        uploadTime: row.upload_time, author: row.author, lastRead: row.last_read, readProgress: row.read_progress
+    };
+
+    const filePath = path.join(BOOKS_DIR, req.user.id, row.filename);
     if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: '书籍文件不存在' });
     }
-    
-    book.lastRead = new Date().toISOString();
-    allBooks[userId][bookId] = book;
-    saveBooksMeta(allBooks);
-    
-    if (book.format.toLowerCase() === 'txt') {
+
+    db.prepare('UPDATE books_meta SET last_read = ? WHERE id = ? AND user_id = ?').run(new Date().toISOString(), bookId, req.user.id);
+
+    if (row.format.toLowerCase() === 'txt') {
         try {
             const content = readTextFileWithEncoding(filePath);
-            res.json({
-                book: book,
-                content: content
-            });
+            res.json({ book, content });
         } catch (error) {
             console.error('读取书籍内容失败:', error);
             res.status(500).json({ error: '读取书籍内容失败' });
         }
     } else {
-        res.json({
-            book: book,
-            downloadUrl: `/api/books/${bookId}/download`
-        });
+        res.json({ book, downloadUrl: `/api/books/${bookId}/download` });
     }
 });
 
 app.get('/api/books/:id/download', (req, res) => {
-    const userId = getUserId(req);
     const bookId = req.params.id;
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId];
-    
-    if (!userBooks || !userBooks[bookId]) {
+    const row = db.prepare('SELECT * FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, req.user.id);
+
+    if (!row) {
         return res.status(404).json({ error: '书籍不存在' });
     }
-    
-    const book = userBooks[bookId];
-    const filePath = path.join(BOOKS_DIR, userId, book.filename);
-    
+
+    const filePath = path.join(BOOKS_DIR, req.user.id, row.filename);
     if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: '书籍文件不存在' });
     }
-    
-    res.download(filePath, book.originalName);
+
+    res.download(filePath, row.original_name);
 });
 
 app.delete('/api/books/:id', (req, res) => {
-    const userId = getUserId(req);
     const bookId = req.params.id;
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId];
-    
-    if (!userBooks || !userBooks[bookId]) {
+    const row = db.prepare('SELECT * FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, req.user.id);
+
+    if (!row) {
         return res.status(404).json({ error: '书籍不存在' });
     }
-    
-    const book = userBooks[bookId];
-    const filePath = path.join(BOOKS_DIR, userId, book.filename);
-    
+
+    const filePath = path.join(BOOKS_DIR, req.user.id, row.filename);
     try {
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
-        
-        delete allBooks[userId][bookId];
-        saveBooksMeta(allBooks);
-        
+        db.prepare('DELETE FROM books_meta WHERE id = ? AND user_id = ?').run(bookId, req.user.id);
         res.json({ success: true, message: '书籍已删除' });
     } catch (error) {
         console.error('删除书籍失败:', error);
@@ -990,7 +700,7 @@ app.post('/api/ask-stream', async (req, res) => {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: model,
+                model,
                 messages: [
                     {
                         role: 'system',
@@ -1020,10 +730,7 @@ app.post('/api/ask-stream', async (req, res) => {
             const errorData = await response.json().catch(() => ({}));
             console.error(`${providerConfig.name} API错误:`, response.status, errorData);
             clearTimeout(timeout);
-            return res.status(response.status).json({ 
-                error: `API请求失败: ${response.status}`,
-                provider: providerId
-            });
+            return res.status(response.status).json({ error: `API请求失败: ${response.status}`, provider: providerId });
         }
 
         res.setHeader('Content-Type', 'text/event-stream');
@@ -1062,8 +769,7 @@ app.post('/api/ask-stream', async (req, res) => {
                             fullContent += content;
                             res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
                         }
-                    } catch (e) {
-                    }
+                    } catch (e) {}
                 }
             }
         }
@@ -1085,7 +791,6 @@ app.post('/api/ask-stream', async (req, res) => {
 async function callAI(apiKey, selectedText, question, bookName, providerConfig) {
     const apiEndpoint = providerConfig.apiEndpoint;
     const model = process.env.AI_MODEL || providerConfig.defaultModel;
-
     const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
 
     const controller = new AbortController();
@@ -1098,7 +803,7 @@ async function callAI(apiKey, selectedText, question, bookName, providerConfig) 
             'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-            model: model,
+            model,
             messages: [
                 {
                     role: 'system',
@@ -1128,18 +833,12 @@ async function callAI(apiKey, selectedText, question, bookName, providerConfig) 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error(`${providerConfig.name} API错误:`, response.status, errorData);
-        
-        if (response.status === 401) {
-            throw new Error('API密钥认证失败');
-        }
+        if (response.status === 401) throw new Error('API密钥认证失败');
         throw new Error(`API请求失败: ${response.status}`);
     }
 
     const data = await response.json();
-    return {
-        answer: data.choices[0].message.content,
-        model: model
-    };
+    return { answer: data.choices[0].message.content, model };
 }
 
 app.get('*', (req, res) => {

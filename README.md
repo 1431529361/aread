@@ -27,7 +27,15 @@
 - **多格式支持**：TXT、PDF、EPUB、MOBI（最大 50MB）
 - **上传进度**：实时显示上传进度条
 - **书籍操作**：在线阅读（TXT）、下载、删除
-- **多用户隔离**：基于 Cookie UUID 实现用户数据隔离
+- **数据隔离**：每个用户的书籍、书架、阅读进度完全独立
+
+### 👤 用户系统
+
+- **注册登录**：支持用户名+密码注册登录，用户名支持中文
+- **JWT 认证**：登录后自动保持登录状态（7天），支持"记住我"（30天）
+- **密码安全**：bcrypt 加密存储，不保存明文密码
+- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、问答历史完全独立
+- **历史同步**：AI 问答历史存储在服务器端，换设备也能查看
 
 ### 🔧 自定义 AI 提供商
 
@@ -49,9 +57,11 @@
 |------|------|
 | 后端 | Express.js 4.18.2 |
 | 前端 | 原生 JavaScript (ES6+) |
+| 数据库 | SQLite (better-sqlite3) |
+| 用户认证 | JWT (jsonwebtoken) |
+| 密码加密 | bcryptjs |
 | 文件上传 | Multer |
 | 编码检测 | jschardet + iconv-lite |
-| 用户会话 | cookie-parser (UUID) |
 | 密钥加密 | crypto (AES-256-CBC) |
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
@@ -150,6 +160,16 @@ PORT=3000
 - UTF-16LE / UTF-16BE
 
 ## API 接口文档
+
+### 用户认证
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/auth/register` | 注册新用户（username + password） |
+| POST | `/api/auth/login` | 用户登录，返回 JWT token |
+| GET | `/api/auth/me` | 获取当前登录用户信息 |
+
+> 除注册和登录外，所有 API 接口均需在请求头携带 `Authorization: Bearer <token>`
 
 ### AI 问答
 
