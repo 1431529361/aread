@@ -4,22 +4,53 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { v4: uuidv4 } = require('uuid');
 const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 require('dotenv').config();
 
+const logger = require('./logger');
 const { initDB, getDB } = require('./database');
 const { authMiddleware, registerHandler, loginHandler, meHandler } = require('./auth');
 
+const log = logger.child('server');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+const ENCRYPTION_KEY_PERSISTED = !!process.env.ENCRYPTION_KEY;
 const BOOKS_DIR = path.join(__dirname, 'books');
 
 const ALLOWED_EXTENSIONS = ['.txt', '.pdf', '.epub', '.mobi'];
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+// ==================== Rate Limiters ====================
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 分钟
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '登录/注册尝试过于频繁，请稍后再试' }
+});
+
+const aiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 分钟
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'AI 请求过于频繁，请稍后再试' }
+});
+
+const uploadLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: '上传过于频繁，请稍后再试' }
+});
 
 if (!fs.existsSync(BOOKS_DIR)) {
     fs.mkdirSync(BOOKS_DIR, { recursive: true });
@@ -30,12 +61,27 @@ let db;
 async function startServer() {
     db = await initDB();
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+    origin: IS_PRODUCTION ? false : true, // 生产环境同源策略，仅开发环境允许跨域
+    credentials: false
+}));
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.post('/api/auth/register', registerHandler);
-app.post('/api/auth/login', loginHandler);
+// 统一错误处理：捕获 JSON 解析失败、payload 过大等
+app.use((err, req, res, next) => {
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({ error: '请求体过大' });
+    }
+    if (err.type === 'entity.parse.failed') {
+        return res.status(400).json({ error: '请求体 JSON 格式错误' });
+    }
+    log.error('未处理错误:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+});
+
+app.post('/api/auth/register', authLimiter, registerHandler);
+app.post('/api/auth/login', authLimiter, loginHandler);
 
 app.use('/api', authMiddleware);
 
@@ -61,7 +107,7 @@ function decrypt(encryptedData) {
         decrypted += decipher.final('utf8');
         return decrypted;
     } catch (error) {
-        console.error('解密失败:', error);
+        log.error('解密失败:', error);
         return null;
     }
 }
@@ -229,7 +275,7 @@ async function validateAPIKey(apiKey, providerConfig) {
         if (response.status === 401 || response.status === 403) return false;
         return response.ok || response.status === 400;
     } catch (error) {
-        console.error('验证API密钥失败:', error.message);
+        log.error('验证API密钥失败:', error.message);
         return false;
     }
 }
@@ -257,7 +303,7 @@ app.get('/api/key/status', (req, res) => {
     res.json({ providers });
 });
 
-app.post('/api/key/set', async (req, res) => {
+app.post('/api/key/set', aiLimiter, async (req, res) => {
     const { apiKey, provider } = req.body;
 
     if (!apiKey || typeof apiKey !== 'string') {
@@ -289,12 +335,12 @@ app.post('/api/key/set', async (req, res) => {
 
         res.json({ success: true, message: `${providerConfig.name} API密钥设置成功`, maskedKey });
     } catch (error) {
-        console.error('设置API密钥失败:', error);
+        log.error('设置API密钥失败:', error);
         res.status(500).json({ error: '设置API密钥时发生错误' });
     }
 });
 
-app.post('/api/key/verify', async (req, res) => {
+app.post('/api/key/verify', aiLimiter, async (req, res) => {
     const { apiKey, provider } = req.body;
     const providerConfig = getProviderConfig(provider, req.user.id);
 
@@ -326,7 +372,7 @@ app.delete('/api/key', (req, res) => {
         }
         res.json({ success: true, message: 'API密钥已删除' });
     } catch (error) {
-        console.error('删除API密钥失败:', error);
+        log.error('删除API密钥失败:', error);
         res.status(500).json({ error: '删除API密钥失败' });
     }
 });
@@ -363,7 +409,7 @@ function generateProviderId(name, userId) {
     return id;
 }
 
-app.post('/api/providers', async (req, res) => {
+app.post('/api/providers', aiLimiter, async (req, res) => {
     const { id: providedId, name, apiEndpoint, defaultModel, models, apiKey } = req.body;
 
     if (!name || !apiEndpoint || !defaultModel || !apiKey) {
@@ -416,7 +462,7 @@ app.post('/api/providers', async (req, res) => {
             provider: { id, name, api_endpoint: apiEndpoint, default_model: defaultModel, models: models || null, isCustom: true }
         });
     } catch (error) {
-        console.error('验证自定义提供商API密钥失败:', error);
+        log.error('验证自定义提供商API密钥失败:', error);
         db.prepare('DELETE FROM custom_providers WHERE id = ? AND user_id = ?').run(id, req.user.id);
         res.status(500).json({ error: '验证API密钥时发生错误' });
     }
@@ -462,7 +508,7 @@ app.delete('/api/providers/:id', (req, res) => {
 
 // ==================== Book Routes ====================
 
-app.post('/api/books/upload', (req, res) => {
+app.post('/api/books/upload', uploadLimiter, (req, res) => {
     upload.single('book')(req, res, (err) => {
         if (err) {
             if (err.code === 'LIMIT_FILE_SIZE') {
@@ -551,7 +597,7 @@ app.get('/api/books/:id', (req, res) => {
             const content = readTextFileWithEncoding(filePath);
             res.json({ book, content });
         } catch (error) {
-            console.error('读取书籍内容失败:', error);
+            log.error('读取书籍内容失败:', error);
             res.status(500).json({ error: '读取书籍内容失败' });
         }
     } else {
@@ -591,158 +637,57 @@ app.delete('/api/books/:id', (req, res) => {
         db.prepare('DELETE FROM books_meta WHERE id = ? AND user_id = ?').run(bookId, req.user.id);
         res.json({ success: true, message: '书籍已删除' });
     } catch (error) {
-        console.error('删除书籍失败:', error);
+        log.error('删除书籍失败:', error);
         res.status(500).json({ error: '删除书籍失败' });
     }
 });
 
 app.put('/api/books/:id/progress', (req, res) => {
-    const userId = getUserId(req);
     const bookId = req.params.id;
     const { progress } = req.body;
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId];
-    
-    if (!userBooks || !userBooks[bookId]) {
+
+    if (typeof progress !== 'number' || progress < 0 || progress > 100) {
+        return res.status(400).json({ error: '进度值必须为 0-100 之间的数字' });
+    }
+
+    const row = db.prepare('SELECT 1 FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, req.user.id);
+    if (!row) {
         return res.status(404).json({ error: '书籍不存在' });
     }
-    
-    allBooks[userId][bookId].readProgress = progress;
-    allBooks[userId][bookId].lastRead = new Date().toISOString();
-    saveBooksMeta(allBooks);
-    
+
+    db.prepare(`
+        UPDATE books_meta SET read_progress = ?, last_read = ?
+        WHERE id = ? AND user_id = ?
+    `).run(progress, new Date().toISOString(), bookId, req.user.id);
+
     res.json({ success: true });
 });
 
-app.post('/api/ask', async (req, res) => {
-    const { text, question, bookName, provider, model: clientModel } = req.body;
-    
-    if (!text || !question) {
-        return res.status(400).json({ error: '请提供选中的文本和问题' });
-    }
+// ==================== Ask Routes ====================
 
-    const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId, req.user.id);
-    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
-    const storedKeys = {};
-    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
-    
-    console.log(`[DEBUG] 请求提供商: ${providerId}`);
-    console.log(`[DEBUG] 存储的密钥结构:`, Object.keys(storedKeys));
-    
-    const keyData = storedKeys[providerId] || (providerId === 'zhipu' && storedKeys.encryptedApiKey ? storedKeys : null);
-    let apiKey = null;
-    
-    if (keyData?.encryptedApiKey) {
-        console.log(`[DEBUG] 找到密钥: ${keyData.maskedKey || '未知'}`);
-        apiKey = decrypt(keyData.encryptedApiKey);
-        console.log(`[DEBUG] 解密结果: ${apiKey ? apiKey.substring(0, 10) + '...' : '失败(null)'}`);
-    } else {
-        console.log(`[DEBUG] 未找到${providerId}的密钥`);
+function getApiKeyForUser(userId, providerId) {
+    const row = db.prepare('SELECT encrypted_key FROM api_keys WHERE user_id = ? AND provider = ?').get(userId, providerId);
+    if (row) {
+        const decrypted = decrypt(row.encrypted_key);
+        if (decrypted) return { apiKey: decrypted, source: 'db' };
     }
-    
-    if (!apiKey) {
-        const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
-        apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
-        if (apiKey) {
-            console.log(`[DEBUG] 从环境变量获取密钥: ${envKeyMap[providerId] || 'AI_API_KEY'}`);
-        }
-        if (!apiKey && providerId.startsWith('custom')) {
-            apiKey = process.env.CUSTOM_API_KEY;
-            if (apiKey) {
-                console.log(`[DEBUG] 从环境变量获取自定义提供商密钥: CUSTOM_API_KEY`);
-            }
-        }
+    const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
+    const envKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
+    if (envKey) return { apiKey: envKey, source: 'env' };
+    if (providerId.startsWith('custom') && process.env.CUSTOM_API_KEY) {
+        return { apiKey: process.env.CUSTOM_API_KEY, source: 'env' };
     }
+    return { apiKey: null, source: null };
+}
 
-    if (!apiKey) {
-        return res.status(403).json({ 
-            error: `未配置${providerConfig.name}的API密钥`,
-            needApiKey: true,
-            provider: providerId,
-            message: `请先设置${providerConfig.name}的API密钥`
-        });
-    }
-
-    try {
-        const { answer, model } = await callAI(apiKey, text, question, bookName, providerConfig, clientModel);
-        res.json({ 
-            answer,
-            model,
-            provider: providerConfig.name
-        });
-    } catch (error) {
-        console.error('AI调用错误:', error);
-        
-        if (error.message && (error.message.includes('401') || error.message.includes('认证'))) {
-            return res.status(401).json({ 
-                error: 'API密钥无效或已过期',
-                needApiKey: true,
-                provider: providerId
-            });
-        }
-        
-        res.status(500).json({ error: `AI服务请求失败: ${error.message || '未知错误'}` });
-    }
-});
-
-app.post('/api/ask-stream', async (req, res) => {
-    const { text, question, bookName, provider, model: clientModel } = req.body;
-    
-    if (!text || !question) {
-        return res.status(400).json({ error: '请提供选中的文本和问题' });
-    }
-
-    const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId, req.user.id);
-    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
-    const storedKeys = {};
-    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
-    
-    const keyData = storedKeys[providerId] || (providerId === 'zhipu' && storedKeys.encryptedApiKey ? storedKeys : null);
-    let apiKey = null;
-    
-    if (keyData?.encryptedApiKey) {
-        apiKey = decrypt(keyData.encryptedApiKey);
-    }
-    
-    if (!apiKey) {
-        const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
-        apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
-        if (!apiKey && providerId.startsWith('custom')) {
-            apiKey = process.env.CUSTOM_API_KEY;
-        }
-    }
-
-    if (!apiKey) {
-        return res.status(403).json({ 
-            error: `未配置${providerConfig.name}的API密钥`,
-            needApiKey: true,
-            provider: providerId
-        });
-    }
-
-    try {
-        const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
-        const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
-        const apiEndpoint = providerConfig.apiEndpoint;
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000);
-
-        const response = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    {
-                        role: 'system',
-                        content: `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
+function buildAIRequestBody({ model, text, question, bookName, stream }) {
+    const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
+    const body = {
+        model,
+        messages: [
+            {
+                role: 'system',
+                content: `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
 1. 如果用户的问题可以直接基于选中的文本回答，请优先依据原文内容作答
 2. 如果用户正在阅读一本已知的书籍（如名著、经典作品），你可以利用自己对该书的了解来回答问题，但必须明确标注哪些是原文内容、哪些是你补充的原著知识
 3. 如果问题与选中文本无关，但你根据书名能够回答，请直接回答，并注明"根据原著"或"根据相关知识"
@@ -751,31 +696,161 @@ app.post('/api/ask-stream', async (req, res) => {
 6. 不要拒绝回答，尽量给出有帮助的信息
 7. 保持客观中立，尊重原著内容
 8. 当用户询问你是什么模型、是谁、使用什么技术时，如实告知用户你当前使用的模型名称（${model}）`
-                    },
-                    {
-                        role: 'user',
-                        content: `${bookContext}选中的文本：\n"${text}"\n\n问题：${question}`
-                    }
-                ],
-                temperature: 0.3,
-                max_tokens: 2000,
-                stream: true
-            }),
+            },
+            {
+                role: 'user',
+                content: `${bookContext}选中的文本：\n"${text}"\n\n问题：${question}`
+            }
+        ],
+        temperature: 0.3,
+        max_tokens: 2000
+    };
+    if (stream) body.stream = true;
+    return body;
+}
+
+app.post('/api/ask', aiLimiter, async (req, res) => {
+    const { text, question, bookName, provider, model: clientModel } = req.body;
+
+    if (!text || !question) {
+        return res.status(400).json({ error: '请提供选中的文本和问题' });
+    }
+    if (typeof text !== 'string' || typeof question !== 'string') {
+        return res.status(400).json({ error: '参数类型错误' });
+    }
+    if (text.length > 50000 || question.length > 2000) {
+        return res.status(400).json({ error: '文本或问题过长' });
+    }
+
+    const providerId = provider || 'zhipu';
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+
+    const { apiKey } = getApiKeyForUser(req.user.id, providerId);
+    if (!apiKey) {
+        return res.status(403).json({
+            error: `未配置${providerConfig.name}的API密钥`,
+            needApiKey: true,
+            provider: providerId,
+            message: `请先设置${providerConfig.name}的API密钥`
+        });
+    }
+
+    const model = clientModel || providerConfig.defaultModel;
+
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 60000);
+
+        const response = await fetch(providerConfig.apiEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(buildAIRequestBody({ model, text, question, bookName, stream: false })),
+            signal: controller.signal
+        });
+        clearTimeout(timer);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            log.error(`${providerConfig.name} API错误:`, response.status, errorData);
+            if (response.status === 401 || response.status === 403) {
+                return res.status(401).json({
+                    error: 'API密钥无效或已过期',
+                    needApiKey: true,
+                    provider: providerId
+                });
+            }
+            return res.status(response.status).json({ error: `API请求失败: ${response.status}` });
+        }
+
+        const data = await response.json();
+        res.json({
+            answer: data.choices?.[0]?.message?.content || '',
+            model,
+            provider: providerConfig.name
+        });
+    } catch (error) {
+        log.error('AI调用错误:', error);
+        res.status(500).json({ error: `AI服务请求失败: ${error.message || '未知错误'}` });
+    }
+});
+
+app.post('/api/ask-stream', aiLimiter, async (req, res) => {
+    const { text, question, bookName, provider, model: clientModel } = req.body;
+
+    if (!text || !question) {
+        return res.status(400).json({ error: '请提供选中的文本和问题' });
+    }
+    if (typeof text !== 'string' || typeof question !== 'string') {
+        return res.status(400).json({ error: '参数类型错误' });
+    }
+    if (text.length > 50000 || question.length > 2000) {
+        return res.status(400).json({ error: '文本或问题过长' });
+    }
+
+    const providerId = provider || 'zhipu';
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+
+    const { apiKey } = getApiKeyForUser(req.user.id, providerId);
+    if (!apiKey) {
+        return res.status(403).json({
+            error: `未配置${providerConfig.name}的API密钥`,
+            needApiKey: true,
+            provider: providerId
+        });
+    }
+
+    const model = clientModel || providerConfig.defaultModel;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+
+    // 跟踪 SSE 状态，避免在已发送 header 后再调 res.status().json()
+    let sseStarted = false;
+    const startSse = () => {
+        if (sseStarted) return;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+        sseStarted = true;
+    };
+
+    // 客户端断开时主动中止上游请求
+    let clientClosed = false;
+    req.on('close', () => {
+        clientClosed = true;
+        controller.abort();
+    });
+
+    try {
+        const response = await fetch(providerConfig.apiEndpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(buildAIRequestBody({ model, text, question, bookName, stream: true })),
             signal: controller.signal
         });
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            console.error(`${providerConfig.name} API错误:`, response.status, errorData);
-            clearTimeout(timeout);
-            return res.status(response.status).json({ error: `API请求失败: ${response.status}`, provider: providerId });
+            log.error(`${providerConfig.name} API错误:`, response.status, errorData);
+            clearTimeout(timer);
+            if (response.status === 401 || response.status === 403) {
+                return res.status(401).json({
+                    error: 'API密钥无效或已过期',
+                    needApiKey: true,
+                    provider: providerId
+                });
+            }
+            return res.status(response.status).json({ error: `API请求失败: ${response.status}` });
         }
 
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-
+        startSse();
         res.write(`data: ${JSON.stringify({ type: 'start', model, provider: providerConfig.name })}\n\n`);
 
         const reader = response.body.getReader();
@@ -783,7 +858,7 @@ app.post('/api/ask-stream', async (req, res) => {
         let buffer = '';
         let fullContent = '';
 
-        while (true) {
+        while (!clientClosed) {
             const { done, value } = await reader.read();
             if (done) break;
 
@@ -792,92 +867,114 @@ app.post('/api/ask-stream', async (req, res) => {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6);
-                    if (dataStr.trim() === '[DONE]') {
-                        res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent })}\n\n`);
-                        res.end();
-                        clearTimeout(timeout);
-                        return;
-                    }
-                    try {
-                        const parsed = JSON.parse(dataStr);
-                        const content = parsed.choices?.[0]?.delta?.content || '';
-                        if (content) {
-                            fullContent += content;
-                            res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
-                        }
-                    } catch (e) {}
+                if (!line.startsWith('data: ')) continue;
+                const dataStr = line.slice(6);
+                if (dataStr.trim() === '[DONE]') {
+                    res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent })}\n\n`);
+                    res.end();
+                    clearTimeout(timer);
+                    return;
                 }
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    const content = parsed.choices?.[0]?.delta?.content || '';
+                    if (content) {
+                        fullContent += content;
+                        res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
+                    }
+                } catch (e) {}
             }
         }
 
         res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent })}\n\n`);
         res.end();
-        clearTimeout(timeout);
+        clearTimeout(timer);
     } catch (error) {
-        console.error('流式AI调用错误:', error);
-        if (!res.headersSent) {
+        log.error('流式AI调用错误:', error);
+        clearTimeout(timer);
+        if (!sseStarted) {
             res.status(500).json({ error: `AI服务请求失败: ${error.message || '未知错误'}` });
-        } else {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || '未知错误' })}\n\n`);
-            res.end();
+        } else if (!res.writableEnded) {
+            try {
+                res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || '未知错误' })}\n\n`);
+                res.end();
+            } catch (_) {}
         }
     }
 });
 
-async function callAI(apiKey, selectedText, question, bookName, providerConfig, clientModel) {
-    const apiEndpoint = providerConfig.apiEndpoint;
-    const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
-    const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
+// ==================== History Routes ====================
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+// 单用户最多保留 200 条历史记录
+const HISTORY_MAX_PER_USER = 200;
 
-    const response = await fetch(apiEndpoint, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-            model,
-            messages: [
-                {
-                    role: 'system',
-                    content: `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
-1. 如果用户的问题可以直接基于选中的文本回答，请优先依据原文内容作答
-2. 如果用户正在阅读一本已知的书籍（如名著、经典作品），你可以利用自己对该书的了解来回答问题，但必须明确标注哪些是原文内容、哪些是你补充的原著知识
-3. 如果问题与选中文本无关，但你根据书名能够回答，请直接回答，并注明"根据原著"或"根据相关知识"
-4. 回答要条理清晰，重点突出，使用分点或段落组织内容
-5. 对于复杂概念，用通俗易懂的语言解释，必要时举例说明
-6. 不要拒绝回答，尽量给出有帮助的信息
-7. 保持客观中立，尊重原著内容
-8. 当用户询问你是什么模型、是谁、使用什么技术时，如实告知用户你当前使用的模型名称（${model}）`
-                },
-                {
-                    role: 'user',
-                    content: `${bookContext}选中的文本：\n"${selectedText}"\n\n问题：${question}`
-                }
-            ],
-            temperature: 0.3,
-            max_tokens: 2000
-        }),
-        signal: controller.signal
-    });
+app.post('/api/history', aiLimiter, (req, res) => {
+    const { text, question, answer } = req.body;
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`${providerConfig.name} API错误:`, response.status, errorData);
-        if (response.status === 401) throw new Error('API密钥认证失败');
-        throw new Error(`API请求失败: ${response.status}`);
+    if (!question || !answer || typeof question !== 'string' || typeof answer !== 'string') {
+        return res.status(400).json({ error: 'question 和 answer 为必填字符串' });
+    }
+    if (question.length > 2000 || answer.length > 20000) {
+        return res.status(400).json({ error: 'question 或 answer 过长' });
+    }
+    if (text && (typeof text !== 'string' || text.length > 50000)) {
+        return res.status(400).json({ error: 'text 字段类型或长度错误' });
     }
 
-    const data = await response.json();
-    return { answer: data.choices[0].message.content, model };
-}
+    // 超出上限时删除最旧的
+    const count = db.prepare('SELECT COUNT(*) as n FROM history WHERE user_id = ?').get(req.user.id).n;
+    if (count >= HISTORY_MAX_PER_USER) {
+        db.prepare(`
+            DELETE FROM history WHERE id IN (
+                SELECT id FROM history WHERE user_id = ?
+                ORDER BY created_at ASC LIMIT ?
+            )
+        `).run(req.user.id, count - HISTORY_MAX_PER_USER + 1);
+    }
+
+    const result = db.prepare(`
+        INSERT INTO history (user_id, selected_text, question, answer)
+        VALUES (?, ?, ?, ?)
+    `).run(req.user.id, text || null, question, answer);
+
+    res.json({ success: true, id: result.lastInsertRowid });
+});
+
+app.get('/api/history', (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 50, HISTORY_MAX_PER_USER);
+    const offset = parseInt(req.query.offset) || 0;
+
+    const rows = db.prepare(`
+        SELECT id, selected_text as text, question, answer, created_at
+        FROM history
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
+    `).all(req.user.id, limit, offset);
+
+    res.json({
+        history: rows.map(r => ({
+            id: r.id,
+            text: r.text || '',
+            question: r.question,
+            answer: r.answer,
+            time: r.created_at
+        })),
+        limit,
+        offset,
+        hasMore: rows.length === limit
+    });
+});
+
+app.delete('/api/history', (req, res) => {
+    const { id } = req.body;
+    if (id) {
+        const result = db.prepare('DELETE FROM history WHERE id = ? AND user_id = ?').run(id, req.user.id);
+        return res.json({ success: true, deleted: result.changes });
+    }
+    const result = db.prepare('DELETE FROM history WHERE user_id = ?').run(req.user.id);
+    res.json({ success: true, deleted: result.changes });
+});
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -889,11 +986,36 @@ app.get('*', (req, res) => {
         console.log(`📚 书籍存储目录: ${BOOKS_DIR}`);
         console.log(`📁 支持格式: ${ALLOWED_EXTENSIONS.join(', ')}`);
         console.log(`⚖️ 文件大小限制: ${formatFileSize(MAX_FILE_SIZE)}`);
+
+        // 启动时安全警告：未持久化的密钥会导致重启后数据无法解密
+        if (!ENCRYPTION_KEY_PERSISTED) {
+            console.warn('\n⚠️  [安全警告] ENCRYPTION_KEY 未在 .env 中配置');
+            console.warn('   当前为每次启动自动生成，所有用户已加密的 API Key 在重启后将无法解密！');
+            console.warn('   建议在 .env 中设置一个 64 位十六进制的 ENCRYPTION_KEY 并妥善保存。\n');
+        }
+        if (!process.env.JWT_SECRET) {
+            console.warn('⚠️  [安全警告] JWT_SECRET 未在 .env 中配置');
+            console.warn('   当前为每次启动自动生成，所有已签发的 token 在重启后将立即失效。\n');
+        }
     });
     
 }
 
 startServer().catch(err => {
-    console.error("Server startup failed:", err);
+    log.error("Server startup failed:", err);
     process.exit(1);
 });
+
+// 优雅退出：确保内存中的数据库写入落盘
+function gracefulShutdown(signal) {
+    console.log(`\n收到 ${signal}，正在关闭...`);
+    try {
+        db?.flush?.();
+        db?.close?.();
+    } catch (e) {
+        log.error('关闭数据库时出错:', e.message);
+    }
+    process.exit(0);
+}
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

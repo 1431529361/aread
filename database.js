@@ -1,16 +1,43 @@
 const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
+const logger = require('./logger');
+const { runMigrations } = require('./migrations');
 
 const DB_PATH = path.join(__dirname, 'data.db');
+const SAVE_DEBOUNCE_MS = 200;
+const log = logger.child('db');
 
 let db = null;
+let saveTimer = null;
+let pendingWrite = false;
+let isShuttingDown = false;
 
 function createDbWrapper(sqlJsDb) {
-    function saveToDisk() {
-        const data = sqlJsDb.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(DB_PATH, buffer);
+    function flushToDisk() {
+        try {
+            const data = sqlJsDb.export();
+            fs.writeFileSync(DB_PATH, Buffer.from(data));
+        } catch (err) {
+            log.error('写入磁盘失败', { error: err.message });
+        }
+    }
+
+    // 防抖写入：短时间内多次 run 只触发一次 export + writeFile
+    function scheduleSave() {
+        if (isShuttingDown) {
+            flushToDisk();
+            return;
+        }
+        pendingWrite = true;
+        if (saveTimer) return;
+        saveTimer = setTimeout(() => {
+            saveTimer = null;
+            if (pendingWrite) {
+                pendingWrite = false;
+                flushToDisk();
+            }
+        }, SAVE_DEBOUNCE_MS);
     }
 
     function createStatement(sql) {
@@ -41,7 +68,7 @@ function createDbWrapper(sqlJsDb) {
                 try {
                     if (params.length > 0) stmt.bind(params);
                     stmt.step();
-                    saveToDisk();
+                    scheduleSave();
                     return { changes: sqlJsDb.getRowsModified() };
                 } finally {
                     stmt.free();
@@ -54,13 +81,17 @@ function createDbWrapper(sqlJsDb) {
         prepare: (sql) => createStatement(sql),
         exec: (sql) => {
             sqlJsDb.run(sql);
-            saveToDisk();
+            scheduleSave();
         },
         pragma: (setting) => {
             try { sqlJsDb.run('PRAGMA ' + setting); } catch (e) {}
         },
+        // 强制立即落盘（用于退出前）
+        flush: flushToDisk,
         close: () => {
-            saveToDisk();
+            isShuttingDown = true;
+            if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+            flushToDisk();
             sqlJsDb.close();
         }
     };
@@ -68,72 +99,25 @@ function createDbWrapper(sqlJsDb) {
 
 async function initDB() {
     const SQL = await initSqlJs();
+    let sqlJsDb;
     if (fs.existsSync(DB_PATH)) {
         const fileBuffer = fs.readFileSync(DB_PATH);
-        db = createDbWrapper(new SQL.Database(fileBuffer));
+        sqlJsDb = new SQL.Database(fileBuffer);
+        log.info('已加载现有数据库', { path: DB_PATH });
     } else {
-        db = createDbWrapper(new SQL.Database());
+        sqlJsDb = new SQL.Database();
+        log.info('创建新数据库', { path: DB_PATH });
     }
 
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
+    sqlJsDb.run('PRAGMA journal_mode = WAL');
+    sqlJsDb.run('PRAGMA foreign_keys = ON');
 
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS api_keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            provider TEXT NOT NULL,
-            encrypted_key TEXT NOT NULL,
-            masked_key TEXT,
-            last_updated TEXT DEFAULT (datetime('now')),
-            UNIQUE(user_id, provider)
-        );
-        CREATE TABLE IF NOT EXISTS custom_providers (
-            id TEXT NOT NULL,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            name TEXT NOT NULL,
-            api_endpoint TEXT NOT NULL,
-            default_model TEXT NOT NULL,
-            models TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT,
-            PRIMARY KEY (id, user_id)
-        );
-        CREATE TABLE IF NOT EXISTS books_meta (
-            id TEXT NOT NULL,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            original_name TEXT NOT NULL,
-            format TEXT NOT NULL,
-            size INTEGER NOT NULL,
-            size_formatted TEXT NOT NULL,
-            upload_time TEXT DEFAULT (datetime('now')),
-            author TEXT DEFAULT '未知',
-            last_read TEXT,
-            read_progress REAL DEFAULT 0,
-            PRIMARY KEY (id, user_id)
-        );
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            selected_text TEXT,
-            question TEXT NOT NULL,
-            answer TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
-        CREATE INDEX IF NOT EXISTS idx_custom_prov_user ON custom_providers(user_id);
-        CREATE INDEX IF NOT EXISTS idx_books_meta_user ON books_meta(user_id);
-        CREATE INDEX IF NOT EXISTS idx_history_user_date ON history(user_id, created_at DESC);
-    `);
+    // 运行迁移系统（幂等且事务安全）
+    runMigrations(sqlJsDb);
 
+    db = createDbWrapper(sqlJsDb);
+    // 迁移后立即持久化一次
+    db.flush();
     return db;
 }
 
