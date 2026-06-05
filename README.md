@@ -34,8 +34,8 @@
 - **注册登录**：支持用户名+密码注册登录，用户名支持中文
 - **JWT 认证**：登录后自动保持登录状态（7天），支持"记住我"（30天）
 - **密码安全**：bcrypt 加密存储，不保存明文密码
-- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、问答历史完全独立
-- **历史同步**：AI 问答历史存储在服务器端，换设备也能查看
+- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、阅读进度完全独立
+- **历史同步**：AI 问答历史保存在服务器（每用户最多 200 条），换设备登录也能查看，可单条删除或一键清空
 
 ### 🔧 自定义 AI 提供商
 
@@ -55,8 +55,8 @@
 
 | 类别 | 技术 |
 |------|------|
-| 后端 | Express.js 4.18.2 |
-| 前端 | 原生 JavaScript (ES6+) |
+| 后端 | Express.js 4.18 |
+| 前端 | 原生 JavaScript (ES6+) ES Modules |
 | 数据库 | SQLite (sql.js - 纯 JS 实现，无需 C++ 编译) |
 | 用户认证 | JWT (jsonwebtoken) |
 | 密码加密 | bcryptjs |
@@ -64,6 +64,9 @@
 | 编码检测 | jschardet + iconv-lite |
 | 密钥加密 | crypto (AES-256-CBC) |
 | 环境变量 | dotenv |
+| 速率限制 | express-rate-limit |
+| 日志 | 自研轻量结构化 logger |
+| Schema 管理 | 自研迁移系统（事务安全） |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
 
 ## 快速开始
@@ -95,20 +98,52 @@ npm start
 npm run dev
 ```
 
+## 安全特性
+
+### 速率限制
+通过 `express-rate-limit` 防止滥用：
+
+| 端点 | 限制 |
+|------|------|
+| `/api/auth/login`、`/api/auth/register` | 15 分钟 20 次 |
+| `/api/ask*`、`/api/key/set`、`/api/key/verify`、`/api/providers` (POST) | 1 分钟 30 次 |
+| `/api/books/upload` | 1 分钟 10 次 |
+
+### 密钥持久化警告
+启动时若未设置 `ENCRYPTION_KEY` 或 `JWT_SECRET` 环境变量，控制台会高亮警告：
+- **ENCRYPTION_KEY** 未配置 → 每次启动重新生成，所有已加密的 API Key 重启后无法解密
+- **JWT_SECRET** 未配置 → 每次启动重新生成，所有已签发的 token 重启后立即失效
+
+### CORS
+生产环境（`NODE_ENV=production`）下禁止跨域，仅允许同源访问。
+
+### 输入验证
+- `/api/ask*` 限制文本 ≤ 50,000 字符，问题 ≤ 2,000 字符
+- `/api/books/:id/progress` 限制进度 0-100
+- `express.json` 请求体上限 2MB
+
 ## 注意事项
 
 1. 上传文件最大 50MB
 2. 流式输出使用 SSE，需浏览器支持
-3. 建议定期备份 data.db 数据库文件
-4. 如需持久化保存 API 密钥，可配置 `ENCRYPTION_KEY` 环境变量（固定密钥，重启后不会丢失）
+3. 建议定期备份 `data.db` 数据库文件
+4. 数据库写入采用 200ms 防抖，避免高频写盘；进程退出时会强制 flush
+5. 如需持久化保存 API 密钥和服务端 token，**必须**配置 `ENCRYPTION_KEY` 和 `JWT_SECRET`
 
 ### 环境变量配置（可选）
 
 如需配置，可在 `.env` 文件中设置：
 
 ```env
-# 固定加密密钥（可选，不配置则每次启动自动生成）
+# 运行环境（development | production）
+NODE_ENV=development
+
+# 固定加密密钥（强烈建议设置，不配置则每次启动自动生成）
+# 生成命令：node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ENCRYPTION_KEY=your_64_char_hex_key
+
+# JWT 密钥（强烈建议设置，不配置则每次启动自动生成）
+JWT_SECRET=your_random_secret_at_least_32_chars
 
 # AI 提供商 API Key（可选，也可直接在 UI 中配置）
 ZHIPU_API_KEY=your_zhipu_key
@@ -212,23 +247,33 @@ PORT=3000
 ```
 trae02airead/
 ├── server.js              # Express 后端主服务
-├── database.js            # SQLite 数据库封装 (sql.js)
-├── auth.js                # 用户认证中间件
+├── auth.js                # JWT 认证中间件 (register/login/me)
+├── database.js            # SQLite 数据库封装 (sql.js + 防抖落盘)
+├── migrations.js          # Schema 迁移系统（事务安全、幂等）
+├── logger.js              # 轻量结构化日志器
 ├── package.json           # 项目依赖配置
-├── .env                   # 环境变量配置
+├── .env.example           # 环境变量配置示例
 ├── .gitignore             # Git 忽略配置
 ├── README.md              # 项目文档
 │
 ├── public/                # 前端静态资源
-│   ├── index.html         # 主页面
+│   ├── index.html         # 主页面 (单页应用)
 │   ├── styles.css         # 样式表
-│   └── app.js             # 前端逻辑
+│   └── js/                # 前端 ES Modules
+│       ├── main.js        # 入口：编排各模块初始化
+│       ├── api.js         # 后端 API 客户端（fetch 封装）
+│       ├── store.js       # 极简状态容器 + localStorage 同步
+│       ├── utils.js       # 通用工具 (escapeHtml/toast/DOM helpers)
+│       ├── auth.js        # 登录/注册/退出/Token 验证
+│       ├── reader.js      # TXT 阅读器（上传/解析/目录/主题）
+│       ├── shelf.js       # 书架管理（列表/上传/下载/删除）
+│       ├── ai.js          # AI 面板 + 文本选区工具栏 + 历史
+│       └── settings.js    # API 密钥 + 自定义提供商 + 模型
 │
 ├── books/                 # 书籍文件存储（运行时）
 │   └── {userId}/
 │
-├── data.db                # SQLite 数据库文件（运行时生成）
-└── node_modules/          # 依赖包
+└── data.db                # SQLite 数据库文件（运行时生成）
 ```
 
 ## 安全说明

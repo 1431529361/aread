@@ -837,7 +837,44 @@ body {
     color: var(--text-muted);
     margin-top: 1rem;
     padding-top: 0.6rem;
+}
+
+.history-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 1rem;
+    padding-top: 0.6rem;
     border-top: 1px dashed var(--border-color);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.history-footer .history-time {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.sync-pending {
+    color: var(--text-warning, #f59e0b);
+    font-style: normal;
+    font-size: 0.7rem;
+}
+
+.history-delete-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    opacity: 0.5;
+    transition: all 0.2s;
+}
+
+.history-delete-btn:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.1);
 }
 
 .empty-history {
