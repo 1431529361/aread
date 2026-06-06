@@ -303,6 +303,7 @@ export function renderHistory() {
             else {
                 store.set({ history: store.get('history').filter(h => h.id !== id) });
                 renderHistory();
+                showToast('已删除');
             }
         });
     });

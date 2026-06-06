@@ -2,7 +2,7 @@
 
 import { auth } from './api.js';
 import { store } from './store.js';
-import { $id } from './utils.js';
+import { $id, showToast } from './utils.js';
 
 let onAuthenticated = null; // 登录成功后的回调，由 main 注入
 

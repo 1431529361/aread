@@ -218,12 +218,36 @@ function renderCustomProvidersList() {
                 <strong>${escapeHtml(p.name)}</strong>
                 <span class="custom-provider-id">${escapeHtml(p.id)}</span>
             </div>
-            <button class="btn btn-sm btn-secondary use-provider-btn" data-id="${p.id}">使用</button>
+            <div class="custom-provider-actions">
+                <button class="btn btn-sm btn-secondary use-provider-btn" data-id="${p.id}">使用</button>
+                <button class="btn btn-sm btn-danger remove-provider-btn" data-id="${p.id}">删除</button>
+            </div>
         </div>
     `).join('');
     list.querySelectorAll('.use-provider-btn').forEach(btn => {
         btn.addEventListener('click', () => switchProvider(btn.dataset.id));
     });
+    list.querySelectorAll('.remove-provider-btn').forEach(btn => {
+        btn.addEventListener('click', () => removeCustomProvider(btn.dataset.id));
+    });
+}
+
+async function removeCustomProvider(providerId) {
+    const provider = store.get('providers').find(p => p.id === providerId);
+    const name = provider ? provider.name : providerId;
+    if (!confirm(`确定要删除自定义提供商「${name}」吗？\n其已保存的 API 密钥也会一并删除。`)) return;
+    try {
+        await providers.remove(providerId);
+        showToast('自定义提供商已删除');
+        // 如果当前正用着被删的提供商，切回第一个内置提供商
+        if (store.get('currentProvider') === providerId) {
+            const fallback = store.get('providers').find(p => !p.isCustom);
+            if (fallback) switchProvider(fallback.id);
+        }
+        await loadProviders();
+    } catch (err) {
+        showToast(err.message || '删除失败');
+    }
 }
 
 async function addCustomProvider() {
