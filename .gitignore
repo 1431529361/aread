@@ -44,8 +44,3 @@ desktop.ini
 # 上传临时文件
 uploads/
 tmp/
-
-# 数据库（含测试用户密码，禁止提交）
-data.db
-data.db-journal
-*.db
