@@ -253,7 +253,11 @@ export async function loadHistory() {
             time: h.time,
             _synced: true
         }));
-        store.set({ history: items });
+        // 保留本地尚未成功同步的临时项，避免被服务端列表直接清掉
+        const pending = (store.get('history') || []).filter(h => h._synced === false);
+        const seen = new Set(items.map(i => i.id));
+        const pendingDedup = pending.filter(h => !seen.has(h.id) && !seen.has(String(h.id)));
+        store.set({ history: [...pendingDedup, ...items] });
         renderHistory();
     } catch (err) {
         console.warn('拉取历史记录失败:', err.message);

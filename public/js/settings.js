@@ -113,7 +113,10 @@ export function switchProvider(provider) {
     const models = getProviderModels(providerInfo);
     if (models.length > 0) {
         $id('modelSelectGroup').style.display = 'block';
-        const savedModel = store.get('currentModel') || providerInfo.defaultModel;
+        // 优先读取该提供商在 localStorage 中独立保存的模型；否则回退到当前内存值
+        const savedModel = getSavedModelForProvider(providerInfo.id)
+            || store.get('currentModel')
+            || providerInfo.defaultModel;
         store.set({ currentModel: savedModel });
         $id('modelSelect').innerHTML = models.map(m =>
             `<option value="${escapeHtml(m.id)}" ${m.id === savedModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`
@@ -149,6 +152,12 @@ function getCustomModels(providerId) {
     try {
         return JSON.parse(localStorage.getItem(`customModels_${providerId}`)) || [];
     } catch { return []; }
+}
+
+function getSavedModelForProvider(providerId) {
+    try {
+        return localStorage.getItem(`selectedModel_${providerId}`) || null;
+    } catch { return null; }
 }
 
 function saveCustomModels(providerId, models) {

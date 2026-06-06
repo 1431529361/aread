@@ -646,7 +646,7 @@ app.put('/api/books/:id/progress', (req, res) => {
     const bookId = req.params.id;
     const { progress } = req.body;
 
-    if (typeof progress !== 'number' || progress < 0 || progress > 100) {
+    if (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0 || progress > 100) {
         return res.status(400).json({ error: '进度值必须为 0-100 之间的数字' });
     }
 
@@ -674,9 +674,6 @@ function getApiKeyForUser(userId, providerId) {
     const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
     const envKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
     if (envKey) return { apiKey: envKey, source: 'env' };
-    if (providerId.startsWith('custom') && process.env.CUSTOM_API_KEY) {
-        return { apiKey: process.env.CUSTOM_API_KEY, source: 'env' };
-    }
     return { apiKey: null, source: null };
 }
 
@@ -941,8 +938,13 @@ app.post('/api/history', aiLimiter, (req, res) => {
 });
 
 app.get('/api/history', (req, res) => {
-    const limit = Math.min(parseInt(req.query.limit) || 50, HISTORY_MAX_PER_USER);
-    const offset = parseInt(req.query.offset) || 0;
+    // 严格校验：非整数、负数都回退到默认；防止 LIMIT/OFFSET 接收异常值
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(rawLimit, HISTORY_MAX_PER_USER)
+        : 50;
+    const rawOffset = parseInt(req.query.offset, 10);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
 
     const rows = db.prepare(`
         SELECT id, selected_text as text, question, answer, created_at

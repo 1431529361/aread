@@ -68,8 +68,17 @@ function createDbWrapper(sqlJsDb) {
                 try {
                     if (params.length > 0) stmt.bind(params);
                     stmt.step();
+                    const changes = sqlJsDb.getRowsModified();
+                    // INSERT 语句：补查 last_insert_rowid()，供历史/记录类接口获取自增主键
+                    const isInsert = /^\s*INSERT\b/i.test(sql);
+                    let lastInsertRowid = undefined;
+                    if (isInsert) {
+                        const idStmt = sqlJsDb.prepare('SELECT last_insert_rowid() AS id');
+                        if (idStmt.step()) lastInsertRowid = idStmt.getAsObject().id;
+                        idStmt.free();
+                    }
                     scheduleSave();
-                    return { changes: sqlJsDb.getRowsModified() };
+                    return { changes, lastInsertRowid };
                 } finally {
                     stmt.free();
                 }

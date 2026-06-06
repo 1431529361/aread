@@ -159,13 +159,36 @@ async function openBook(bookId) {
     }
 }
 
-function downloadBook(bookId) {
-    const link = document.createElement('a');
-    link.href = books.downloadUrl(bookId);
-    link.setAttribute('download', '');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+async function downloadBook(bookId) {
+    const book = store.get('books').find(b => b.id === bookId);
+    if (!book) return;
+    try {
+        const response = await fetch(`/api/books/${bookId}/download`, {
+            headers: { 'Authorization': `Bearer ${store.get('token')}` }
+        });
+        if (!response.ok) throw new Error('下载失败');
+
+        // 从 Content-Disposition 解析服务器给出的原始文件名
+        let filename = book.originalName || book.original_name || 'download';
+        const disposition = response.headers.get('content-disposition') || '';
+        const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+        if (match) {
+            try { filename = decodeURIComponent(match[1]); } catch (_) { filename = match[1]; }
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        // 稍后释放 URL，确保浏览器已开始下载
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+        showToast(err.message || '下载失败');
+    }
 }
 
 async function deleteBook(bookId) {
