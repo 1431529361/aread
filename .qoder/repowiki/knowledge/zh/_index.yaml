@@ -1,0 +1,41 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+exported_at: "2026-06-06T11:13:05Z"
+modules:
+    "":
+        dir_name: AI阅读助手全栈应用
+        title: AI阅读助手全栈应用
+        scope:
+            - package.json
+            - .gitignore
+            - .gitattributes
+            - .api_keys.json
+            - .books_meta.json
+            - .custom_providers.json
+            - .env
+            - .env.example
+            - README.md
+            - books\18cd62ce-fafc-48c5-bad7-fb77d8ada1de\36384271-091d-457e-93d5-bd0af1bdd5c9.txt
+            - books\18cd62ce-fafc-48c5-bad7-fb77d8ada1de\765cdd2d-4c30-4ae7-88dc-1dab34992710.txt
+            - books\5e9ac05a-ff40-4771-b836-d116d9c73c8a\447dce98-c572-4a55-886b-cc377233ffe4.txt
+            - data.db
+            - package-lock.json
+            - public\app.js
+            - public\index.html
+            - public\styles.css
+            - server.js
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    frontend_static:
+        dir_name: AI阅读助手前端交互模块
+        title: AI阅读助手前端交互模块
+        scope:
+            - public/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

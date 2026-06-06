@@ -2,27 +2,19 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI阅读助手 - 智能阅读体验</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>AI阅读助手</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="app-container">
-        <header class="header">
+        <!-- ========== Header ========== -->
+        <header class="header" id="appHeader">
             <div class="header-content">
                 <h1 class="logo">
-                    <span class="logo-icon">📚</span>
+                    <svg class="logo-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                     AI阅读助手
                 </h1>
-                <nav class="nav">
-                    <button class="nav-btn active" data-view="reader">阅读模式</button>
-                    <button class="nav-btn" data-view="library">📚 书架</button>
-                    <button class="nav-btn" data-view="history">历史记录</button>
-                    <button class="nav-btn settings-btn" data-view="settings" title="API密钥设置">
-                        <span class="settings-icon">⚙️</span>
-                        <span class="settings-text">设置</span>
-                    </button>
-                </nav>
                 <div class="user-info" id="userInfo" style="display:none">
                     <span class="username-display" id="displayUsername"></span>
                     <button class="logout-btn" id="logoutBtn">退出</button>
@@ -30,154 +22,42 @@
             </div>
         </header>
 
-        <main class="main-content">
-            <div class="reader-view active" id="readerView">
-                <aside class="sidebar">
-                    <div class="sidebar-section">
-                        <h3 class="sidebar-title">文章目录</h3>
-                        <ul class="toc-list" id="tocList">
-                            <li class="toc-item active" data-section="section1">第一章</li>
-                            <li class="toc-item" data-section="section2">第二章</li>
-                            <li class="toc-item" data-section="section3">第三章</li>
-                            <li class="toc-item" data-section="section4">第四章</li>
-                            <li class="toc-item" data-section="section5">第五章</li>
-                        </ul>
+        <!-- ========== Main Views ========== -->
+        <main class="main-content" id="mainContent">
+
+            <!-- Bookshelf (Homepage) -->
+            <div class="bookshelf-view active" id="bookshelfView">
+                <div class="bookshelf-header">
+                    <h2 class="bookshelf-title">我的书架</h2>
+                    <div class="bookshelf-stats" id="libraryStats">
+                        <span>共 <strong>0</strong> 本书</span>
                     </div>
-                    <div class="sidebar-section">
-                        <h3 class="sidebar-title">阅读设置</h3>
-                        <div class="settings-group">
-                            <label class="setting-label">字体大小</label>
-                            <div class="font-size-control">
-                                <button class="font-btn" id="decreaseFont">A-</button>
-                                <span class="font-size-display" id="fontSizeDisplay">18px</span>
-                                <button class="font-btn" id="increaseFont">A+</button>
-                            </div>
+                </div>
+                <div class="bookshelf-upload">
+                    <div class="upload-card" id="uploadCard">
+                        <svg class="upload-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <div class="upload-card-text">
+                            <span class="upload-card-title">上传新书籍</span>
+                            <span class="upload-card-hint">TXT / PDF / EPUB / MOBI</span>
                         </div>
-                        <div class="settings-group">
-                            <label class="setting-label">主题模式</label>
-                            <div class="theme-control">
-                                <button class="theme-btn active" data-theme="light">☀️ 明亮</button>
-                                <button class="theme-btn" data-theme="dark">🌙 暗黑</button>
-                                <button class="theme-btn" data-theme="sepia">📜 护眼</button>
-                            </div>
-                        </div>
+                        <input type="file" id="bookFileInput" accept=".txt,.pdf,.epub,.mobi" class="file-input">
+                        <button class="upload-book-btn" id="uploadBookBtn">选择文件</button>
                     </div>
-                    <div class="sidebar-section api-status-section">
-                        <h3 class="sidebar-title">API状态</h3>
-                        <div class="api-status" id="apiStatus">
-                            <span class="status-indicator checking"></span>
-                            <span class="status-text">检查中...</span>
-                        </div>
-                        <button class="configure-api-btn" id="configureApiBtn">配置API密钥</button>
+                    <div class="upload-progress" id="uploadProgress" style="display:none">
+                        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                        <div class="progress-text" id="progressText">上传中...</div>
                     </div>
-                </aside>
-
-                <article class="article-container" id="articleContainer">
-                    <div class="upload-section" id="uploadSection">
-                        <div class="upload-area" id="uploadArea">
-                            <div class="upload-icon">📄</div>
-                            <h3 class="upload-title">上传TXT书籍</h3>
-                            <p class="upload-desc">拖拽文件到此处，或点击选择文件</p>
-                            <input type="file" id="fileInput" accept=".txt" class="file-input">
-                            <button class="upload-btn" id="uploadBtn">选择文件</button>
-                        </div>
-                        <div class="file-info" id="fileInfo" style="display: none;">
-                            <span class="file-name" id="fileName"></span>
-                            <button class="remove-file-btn" id="removeFileBtn" title="移除文件">×</button>
-                        </div>
+                </div>
+                <div class="books-grid" id="booksGrid">
+                    <div class="empty-library">
+                        <svg class="empty-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+                        <p>书架空空如也</p>
+                        <p class="empty-hint">上传你的第一本书开始阅读吧</p>
                     </div>
-                    <div class="article-header" id="articleHeader">
-                        <h1 class="article-title" id="articleTitle">百年孤独</h1>
-                        <div class="article-meta" id="articleMeta">
-                            <span class="meta-item">作者：加西亚·马尔克斯</span>
-                            <span class="meta-item">魔幻现实主义文学代表作</span>
-                            <span class="meta-item">阅读时间：约2小时</span>
-                        </div>
-                    </div>
-
-                    <div class="article-content" id="articleContent">
-                        <section id="section1" class="content-section">
-                            <h2>第一章</h2>
-                            <p>多年以后，奥雷连诺上校站在行刑队面前，准会想起父亲带他去参观冰块的那个遥远的下午。当时，马孔多是个二十户人家的村庄，一座座土房都盖在河岸上，河水清澈，沿着遍布石头的河床流去，河里的石头光滑、洁白，活象史前的巨蛋。</p>
-                            <p>这块天地还是新开辟的，许多东西都叫不出名字，不得不用手指指点点。每年三月，衣衫褴楼的吉卜赛人都要在村边搭起帐篷，在笛鼓的喧嚣声中，向马孔多的居民介绍科学家的最新发明。他们首先带来的是磁铁。一个身躯高大的吉卜赛人，自称梅尔加德斯，满脸络腮胡子，手指瘦得象鸟的爪子，向观众出色地表演了他所谓的马其顿炼金术士创造的世界第八奇迹。</p>
-                            <blockquote>
-                                "东西也是有生命的，"吉卜赛人用刺耳的声调说，"只消唤起它们的灵性。"
-                            </blockquote>
-                            <p>霍·阿·布恩蒂亚狂热的想象力经常超过大自然的创造力，甚至越过奇迹和魔力的限度，他认为这种暂时无用的科学发明可以用来开采地下的金子。他用自己的一匹骡子和两只山羊换下了两块磁铁，开始了漫长的寻金之旅。</p>
-                        </section>
-
-                        <section id="section2" class="content-section">
-                            <h2>第二章</h2>
-                            <p>十六世纪，海盗弗兰西斯·德拉克围攻列奥阿察的时候，乌苏娜·伊古阿兰的曾祖母被当当的警钟声和隆隆的炮击声吓坏了，由于神经紧张，竟一屁股坐在生了火的炉子上。因此，曾祖母受了严重的的伤，再也无法过夫妻生活。</p>
-                            <p>在这荒僻的村子里，早就有个西班牙人的后裔，叫做霍塞·阿卡蒂奥·布恩蒂亚，他是栽种烟草的；乌苏娜的曾祖父和他一起经营这桩有利可图的事业，短时期内两人都建立了很好的家业。多少年过去了，西班牙后裔的曾孙儿和亚拉冈人的曾孙女结了婚。</p>
-                            <p>乌苏娜和丈夫是表兄妹，他俩是在古老的村子里一块儿长大的。尽管他俩之间的婚姻是他俩刚刚出世就能预见到的，然而两个年轻人表示结婚愿望的时候，双方的家长都反对。几百年来，两族的人是杂配的，他们生怕这两个健全的后代可能丢脸地生出一只蜥蜴。</p>
-                        </section>
-
-                        <section id="section3" class="content-section">
-                            <h2>第三章</h2>
-                            <p>那时，有个女人常来布恩蒂亚家里，帮助乌苏娜做些家务。这个女人愉快、热情、嘴尖，会用纸牌占卜。乌苏娜跟这女人谈了谈自己的忧虑。她觉得孩子的发育是不匀称的，就象她的亲戚长了条猪尾巴。女人止不住地放声大笑，笑声响彻了整座屋子。</p>
-                            <p>"恰恰相反，"她说。"他会有福气的。"</p>
-                            <p>过了几天，为了证明自己的预言准确，她带来一副纸牌，把自己和霍·阿卡蒂奥锁在厨房旁边的库房里。她不慌不忙地在一张旧的木工台上摆开纸牌，口中念念有词。忽然，占卜的女人伸手摸了他一下。"我的天！"她真正吃惊地叫了一声，就再也说不出什么话了。</p>
-                        </section>
-
-                        <section id="section4" class="content-section">
-                            <h2>第四章</h2>
-                            <p>事实上，他们是经过多日坚持不懈的努力取得成功的。乌苏娜挺高兴，甚至感谢上帝发明了炼金术，村里的居民挤进试验室，主人就拿抹上番石榴酱的烤饼招待他们，庆祝这个奇迹的出现。</p>
-                            <p>霍·阿·布恩蒂亚把一块微黄的干硬东西拿到他的眼前，问道："你看这象什么？"霍·阿卡蒂奥直耿耿地回答："象狗屎。"父亲用手背在他嘴唇上碰了一下，碰得很重，霍·阿卡蒂奥嘴里竟然流出血来，眼里流出泪来。</p>
-                            <p>夜里，皮拉·苔列娜在黑暗中摸到一小瓶药和棉花，拿浸了亚尔尼加碘酒的压布贴在肿处，为霍·阿卡蒂奥尽心地做了一切，而没有使他产生任何不舒服之感，竭力爱护他，而不碰痛他。</p>
-                        </section>
-
-                        <section id="section5" class="content-section">
-                            <h2>第五章</h2>
-                            <p>发现儿子失踪之后，乌苏娜就在整个村子里到处找他，在吉卜赛人先前搭篷的地方，她只看见一堆堆垃圾和还在冒烟的篝火灰烬。有些村民在刨垃圾堆，希望找到玻璃串珠，其中一个村民向乌苏娜说，昨夜他曾看见她的儿子跟杂技演员们在一起。</p>
-                            <p>"他变成吉卜赛人啦！"她向丈夫吵嚷，可是丈夫对于儿子的失踪丝毫没有表示惊慌。"这倒不坏，"霍·阿·布恩蒂亚一面说，一面在研钵里捣什么东西。"他可以成为一个男子汉了。"</p>
-                            <p>时间一过，一切照旧。霍·阿·布恩蒂亚和他的儿子自己也不知道，他们究竟是什么时候回到试验室里的，他们打扫了尘土，点燃了炉火，又专心地忙于摆弄那在一堆肥料上放了几个月的东西了。</p>
-                        </section>
-                    </div>
-                </article>
-
-                <aside class="ai-panel" id="aiPanel">
-                    <div class="ai-panel-header">
-                        <h2 class="ai-panel-title">
-                            <span class="ai-icon">🤖</span>
-                            AI助手
-                        </h2>
-                        <button class="close-panel-btn" id="closePanelBtn">×</button>
-                    </div>
-                    <div class="ai-panel-content">
-                        <div class="selected-text-box" id="selectedTextBox">
-                            <div class="selected-text-label">选中的文本：</div>
-                            <div class="selected-text-content" id="selectedTextContent"></div>
-                        </div>
-                        
-                        <div class="quick-actions">
-                            <button class="quick-action-btn" data-action="explain">💡 解释说明</button>
-                            <button class="quick-action-btn" data-action="summarize">📝 总结概括</button>
-                            <button class="quick-action-btn" data-action="translate">🌐 翻译成英文</button>
-                            <button class="quick-action-btn" data-action="expand">📖 扩展阅读</button>
-                        </div>
-
-                        <div class="custom-question">
-                            <label class="question-label">自定义问题：</label>
-                            <textarea class="question-input" id="questionInput" placeholder="输入您想问的问题..."></textarea>
-                            <button class="ask-btn" id="askBtn">
-                                <span class="ask-btn-text">提问</span>
-                                <span class="ask-btn-loading">思考中...</span>
-                            </button>
-                        </div>
-
-                        <div class="ai-response" id="aiResponse">
-                            <div class="response-header">
-                                <span class="response-label">AI回答：</span>
-                            </div>
-                            <div class="response-content" id="responseContent">
-                                <p class="placeholder-text">选中文字后，点击快捷操作或输入问题，AI将为您提供解答。</p>
-                            </div>
-                        </div>
-                    </div>
-                </aside>
+                </div>
             </div>
 
+            <!-- History -->
             <div class="history-view" id="historyView">
                 <div class="history-header">
                     <h2>问答历史</h2>
@@ -188,70 +68,79 @@
                 </div>
             </div>
 
-            <div class="library-view" id="libraryView">
-                <div class="library-header">
-                    <h2>📚 我的书架</h2>
-                    <div class="library-stats" id="libraryStats">
-                        <span class="stat-item">共 <strong>0</strong> 本书</span>
-                    </div>
-                </div>
-                
-                <div class="library-upload-section">
-                    <div class="upload-card" id="uploadCard">
-                        <div class="upload-card-icon">📤</div>
-                        <div class="upload-card-content">
-                            <h3>上传新书籍</h3>
-                            <p>支持 TXT, PDF, EPUB, MOBI 格式</p>
-                            <p class="upload-limit">最大文件大小: 50MB</p>
-                        </div>
-                        <input type="file" id="bookFileInput" accept=".txt,.pdf,.epub,.mobi" class="file-input">
-                        <button class="upload-book-btn" id="uploadBookBtn">选择文件</button>
-                    </div>
-                    <div class="upload-progress" id="uploadProgress" style="display: none;">
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progressFill"></div>
-                        </div>
-                        <div class="progress-text" id="progressText">上传中...</div>
-                    </div>
-                </div>
-
-                <div class="books-grid" id="booksGrid">
-                    <div class="empty-library">
-                        <div class="empty-icon">📖</div>
-                        <p>书架空空如也</p>
-                        <p class="empty-hint">上传您的第一本书籍开始阅读吧</p>
-                    </div>
-                </div>
-            </div>
-
+            <!-- Settings / My -->
             <div class="settings-view" id="settingsView">
                 <div class="settings-container">
+                    <!-- User Card -->
+                    <div class="my-user-card">
+                        <div class="my-avatar" id="myAvatar">U</div>
+                        <div class="my-user-info">
+                            <span class="my-username" id="myUsername"></span>
+                            <span class="my-userhint">AI阅读助手用户</span>
+                        </div>
+                        <button class="my-logout-btn" id="myLogoutBtn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                            退出登录
+                        </button>
+                    </div>
+
+                    <!-- Theme -->
                     <div class="settings-card">
                         <div class="settings-card-header">
-                            <h2>🔑 AI 服务提供商</h2>
-                            <p class="settings-description">选择并配置您想要使用的 AI 服务提供商</p>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                            <h3>主题与阅读</h3>
+                        </div>
+                        <div class="theme-selector">
+                            <button class="theme-card active" data-theme="light">
+                                <span class="theme-preview theme-light-preview"></span>
+                                <span class="theme-name">明亮</span>
+                            </button>
+                            <button class="theme-card" data-theme="dark">
+                                <span class="theme-preview theme-dark-preview"></span>
+                                <span class="theme-name">暗黑</span>
+                            </button>
+                            <button class="theme-card" data-theme="sepia">
+                                <span class="theme-preview theme-sepia-preview"></span>
+                                <span class="theme-name">护眼</span>
+                            </button>
+                        </div>
+                        <div class="font-size-setting">
+                            <label>字体大小</label>
+                            <div class="font-size-control">
+                                <button class="font-btn" id="decreaseFont">A-</button>
+                                <span class="font-size-display" id="fontSizeDisplay">18px</span>
+                                <button class="font-btn" id="increaseFont">A+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Provider -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                            <h3>AI 服务提供商</h3>
                         </div>
 
                         <div class="provider-tabs" id="providerTabs">
-                            <button class="provider-tab active" data-provider="zhipu">🤖 智谱AI</button>
-                            <button class="provider-tab" data-provider="siliconflow">🌊 硅基流动</button>
-                            <button class="provider-tab" data-provider="custom">➕ 自定义</button>
+                            <button class="provider-tab active" data-provider="zhipu">智谱AI</button>
+                            <button class="provider-tab" data-provider="siliconflow">硅基流动</button>
+                            <button class="provider-tab" data-provider="custom">+ 自定义</button>
                         </div>
-                        
+
                         <div class="api-key-status" id="apiKeyStatus">
                             <div class="status-row">
                                 <span class="status-label">当前状态：</span>
                                 <span class="status-value" id="keyStatusValue">检查中...</span>
                             </div>
-                            <div class="status-row" id="maskedKeyRow" style="display: none;">
+                            <div class="status-row" id="maskedKeyRow" style="display:none">
                                 <span class="status-label">密钥：</span>
                                 <span class="status-value masked-key" id="maskedKeyValue"></span>
                             </div>
-                            <div class="status-row" id="lastUpdatedRow" style="display: none;">
+                            <div class="status-row" id="lastUpdatedRow" style="display:none">
                                 <span class="status-label">更新时间：</span>
                                 <span class="status-value" id="lastUpdatedValue"></span>
                             </div>
-                            <div class="status-row" id="modelRow" style="display: none;">
+                            <div class="status-row" id="modelRow" style="display:none">
                                 <span class="status-label">当前模型：</span>
                                 <span class="status-value" id="modelValue"></span>
                             </div>
@@ -263,26 +152,20 @@
                                 <div class="input-wrapper">
                                     <input type="password" id="apiKeyInput" class="api-key-input" placeholder="请输入您的API密钥">
                                     <button class="toggle-visibility-btn" id="toggleVisibilityBtn" title="显示/隐藏密钥">
-                                        <span class="eye-icon">👁️</span>
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                     </button>
                                 </div>
-                                <p class="form-hint" id="apiKeyHint">
-                                    获取API密钥：访问 
-                                    <a href="https://open.bigmodel.cn/" target="_blank">智谱AI开放平台</a>
-                                </p>
+                                <p class="form-hint" id="apiKeyHint">获取API密钥：访问 <a href="https://open.bigmodel.cn/" target="_blank">智谱AI开放平台</a></p>
                             </div>
-
-                            <div class="form-group" id="modelSelectGroup" style="display: none;">
+                            <div class="form-group" id="modelSelectGroup" style="display:none">
                                 <label for="modelSelect">选择模型</label>
-                                <select id="modelSelect" class="model-select">
-                                </select>
+                                <select id="modelSelect" class="model-select"></select>
                                 <div class="custom-model-input" id="customModelInputArea">
                                     <input type="text" id="customModelId" class="api-key-input" placeholder="输入模型ID，如 glm-4-plus">
-                                    <button class="btn btn-sm btn-secondary" id="addModelBtn">添加模型</button>
+                                    <button class="btn btn-sm btn-secondary" id="addModelBtn">添加</button>
                                 </div>
                                 <div class="custom-model-tags" id="customModelTags"></div>
                             </div>
-                            
                             <div class="form-actions">
                                 <button class="btn btn-primary" id="saveApiKeyBtn">
                                     <span class="btn-text">保存密钥</span>
@@ -292,30 +175,25 @@
                                     <span class="btn-text">验证密钥</span>
                                     <span class="btn-loading">验证中...</span>
                                 </button>
-                                <button class="btn btn-danger" id="deleteApiKeyBtn" style="display: none;">
-                                    删除密钥
-                                </button>
+                                <button class="btn btn-danger" id="deleteApiKeyBtn" style="display:none">删除密钥</button>
                             </div>
                         </div>
 
-                        <div class="custom-providers-section" id="customProvidersSection" style="display: none;">
-                            <h3>📋 已添加的自定义提供商</h3>
+                        <div class="custom-providers-section" id="customProvidersSection" style="display:none">
+                            <h3>已添加的自定义提供商</h3>
                             <div class="custom-providers-list" id="customProvidersList">
                                 <p class="empty-custom">暂无自定义提供商</p>
                             </div>
                         </div>
-
-                        <div class="add-provider-form" id="addProviderForm" style="display: none;">
-                            <h3>➕ 添加自定义提供商</h3>
+                        <div class="add-provider-form" id="addProviderForm" style="display:none">
+                            <h3>添加自定义提供商</h3>
                             <div class="form-group">
                                 <label for="customProviderName">显示名称 <span class="required">*</span></label>
-                                <input type="text" id="customProviderName" class="api-key-input" placeholder="如：OpenAI、DeepSeek、Moonshot">
-                                <p class="form-hint">系统将根据名称自动生成唯一标识</p>
+                                <input type="text" id="customProviderName" class="api-key-input" placeholder="如：OpenAI、DeepSeek">
                             </div>
                             <div class="form-group">
                                 <label for="customProviderEndpoint">API 地址 <span class="required">*</span></label>
                                 <input type="text" id="customProviderEndpoint" class="api-key-input" placeholder="https://api.example.com/v1/chat/completions">
-                                <p class="form-hint">完整的聊天补全 API 地址</p>
                             </div>
                             <div class="form-group">
                                 <label for="customProviderModel">默认模型 <span class="required">*</span></label>
@@ -323,18 +201,16 @@
                             </div>
                             <div class="form-group">
                                 <label for="customProviderModels">可选模型列表（选填）</label>
-                                <input type="text" id="customProviderModels" class="api-key-input" placeholder='如：[{"id":"gpt-4","name":"GPT-4"},{"id":"gpt-3.5","name":"GPT-3.5"}]'>
-                                <p class="form-hint">JSON格式，如：[{"id":"model-id","name":"显示名称"}]</p>
+                                <input type="text" id="customProviderModels" class="api-key-input" placeholder='JSON: [{"id":"model-id","name":"显示名称"}]'>
                             </div>
                             <div class="form-group">
                                 <label for="customProviderApiKey">API 密钥 <span class="required">*</span></label>
                                 <div class="input-wrapper">
-                                    <input type="password" id="customProviderApiKey" class="api-key-input" placeholder="请输入该提供商的 API 密钥">
-                                    <button class="toggle-visibility-btn" id="toggleCustomKeyVisibility" title="显示/隐藏密钥">
-                                        <span class="eye-icon">👁️</span>
+                                    <input type="password" id="customProviderApiKey" class="api-key-input" placeholder="请输入API密钥">
+                                    <button class="toggle-visibility-btn" id="toggleCustomKeyVisibility" title="显示/隐藏">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                     </button>
                                 </div>
-                                <p class="form-hint">密钥将使用 AES-256 加密存储</p>
                             </div>
                             <div class="form-actions">
                                 <button class="btn btn-primary" id="addProviderBtn">
@@ -345,49 +221,177 @@
                         </div>
 
                         <div class="api-info-section" id="apiInfoSection">
-                            <h3>📋 使用说明</h3>
+                            <h3>使用说明</h3>
                             <ul class="info-list" id="apiInfoList">
                                 <li>API密钥将使用AES-256加密存储在本地服务器</li>
                                 <li>密钥仅用于调用AI服务，不会传输到其他服务器</li>
                                 <li>您可以随时删除已保存的密钥</li>
-                                <li>推荐使用 glm-4-flash 模型，性价比高</li>
+                                <li>推荐使用 glm-4.5-air 模型，性价比高</li>
                             </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== Full-screen Reading View ========== -->
+            <div class="reading-view" id="readingView">
+                <!-- Top toolbar (hidden by default, tap to show) -->
+                <div class="reading-toolbar reading-toolbar-top" id="readingToolbarTop">
+                    <button class="toolbar-icon-btn" id="exitReadingBtn" title="返回">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                    </button>
+                    <span class="reading-book-title" id="readingBookTitle"></span>
+                    <div class="toolbar-spacer"></div>
+                </div>
+
+                <!-- Article content -->
+                <div class="reading-content" id="readingContent">
+                    <div class="reading-article" id="readingArticle"></div>
+                </div>
+
+                <!-- Reading progress bar -->
+                <div class="reading-progress-bar" id="readingProgressBar">
+                    <div class="reading-progress-fill" id="readingProgressFill"></div>
+                </div>
+
+                <!-- Bottom toolbar (hidden by default, tap to show) -->
+                <div class="reading-toolbar reading-toolbar-bottom" id="readingToolbarBottom">
+                    <button class="toolbar-icon-btn" id="tocBtn" title="目录">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                        <span class="toolbar-label">目录</span>
+                    </button>
+                    <button class="toolbar-icon-btn" id="readingFontBtn" title="字体">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+                        <span class="toolbar-label">字体</span>
+                    </button>
+                    <button class="toolbar-icon-btn" id="readingThemeBtn" title="主题">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                        <span class="toolbar-label">主题</span>
+                    </button>
+                    <button class="toolbar-icon-btn" id="aiToggleBtn" title="AI助手">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1a7 7 0 0 1-7 7H8a7 7 0 0 1-7-7H0a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
+                        <span class="toolbar-label">AI</span>
+                    </button>
+                </div>
+
+                <!-- TOC Drawer -->
+                <div class="toc-overlay" id="tocOverlay"></div>
+                <div class="toc-drawer" id="tocDrawer">
+                    <div class="toc-drawer-header">
+                        <h3>目录</h3>
+                        <button class="toc-close-btn" id="tocCloseBtn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+                    <ul class="toc-list" id="tocList"></ul>
+                </div>
+
+                <!-- Font/Theme Settings Panel -->
+                <div class="reading-settings-panel" id="readingSettingsPanel">
+                    <div class="reading-settings-row">
+                        <label>字体大小</label>
+                        <div class="font-size-control">
+                            <button class="font-btn" id="readDecreaseFont">A-</button>
+                            <span class="font-size-display" id="readFontSizeDisplay">18px</span>
+                            <button class="font-btn" id="readIncreaseFont">A+</button>
+                        </div>
+                    </div>
+                    <div class="reading-settings-row">
+                        <label>主题</label>
+                        <div class="theme-control">
+                            <button class="theme-btn active" data-theme="light">明亮</button>
+                            <button class="theme-btn" data-theme="dark">暗黑</button>
+                            <button class="theme-btn" data-theme="sepia">护眼</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Floating Button -->
+                <button class="ai-fab" id="aiFab" title="AI助手">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1a7 7 0 0 1-7 7H8a7 7 0 0 1-7-7H0a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
+                </button>
+
+                <!-- AI Panel (collapsible, bottom sheet) -->
+                <div class="ai-panel-sheet" id="aiPanelSheet">
+                    <div class="ai-sheet-handle" id="aiSheetHandle">
+                        <div class="handle-bar"></div>
+                    </div>
+                    <div class="ai-sheet-header">
+                        <h3 class="ai-sheet-title">AI 助手</h3>
+                        <button class="ai-sheet-close" id="aiSheetClose">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+                    <div class="ai-sheet-content">
+                        <div class="selected-text-box" id="selectedTextBox" style="display:none">
+                            <div class="selected-text-label">选中的文本：</div>
+                            <div class="selected-text-content" id="selectedTextContent"></div>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="quick-action-btn" data-action="explain">解释说明</button>
+                            <button class="quick-action-btn" data-action="summarize">总结概括</button>
+                            <button class="quick-action-btn" data-action="translate">翻译成英文</button>
+                            <button class="quick-action-btn" data-action="expand">扩展阅读</button>
+                        </div>
+                        <div class="custom-question">
+                            <textarea class="question-input" id="questionInput" placeholder="输入您想问的问题..."></textarea>
+                            <button class="ask-btn" id="askBtn">
+                                <span class="ask-btn-text">提问</span>
+                                <span class="ask-btn-loading">思考中...</span>
+                            </button>
+                        </div>
+                        <div class="ai-response" id="aiResponse">
+                            <div class="response-header">
+                                <span class="response-label">AI回答：</span>
+                            </div>
+                            <div class="response-content" id="responseContent">
+                                <p class="placeholder-text">选中文字后，点击快捷操作或输入问题</p>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </main>
 
+        <!-- ========== Bottom Navigation ========== -->
+        <nav class="bottom-nav" id="bottomNav">
+            <button class="bottom-nav-item active" data-view="bookshelf">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                <span>书架</span>
+            </button>
+            <button class="bottom-nav-item" data-view="history">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span>历史</span>
+            </button>
+            <button class="bottom-nav-item" data-view="settings">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span>我的</span>
+            </button>
+        </nav>
+
+        <!-- ========== Floating Toolbar (text selection) ========== -->
         <div class="floating-toolbar" id="floatingToolbar">
             <button class="toolbar-btn" data-action="ask" title="向AI提问">
-                <span class="toolbar-icon">🤖</span>
-                <span class="toolbar-text">AI提问</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1a7 7 0 0 1-7 7H8a7 7 0 0 1-7-7H0a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/></svg>
+                AI提问
             </button>
-            <button class="toolbar-btn" data-action="explain" title="解释说明">
-                <span class="toolbar-icon">💡</span>
-                <span class="toolbar-text">解释</span>
-            </button>
-            <button class="toolbar-btn" data-action="summarize" title="总结概括">
-                <span class="toolbar-icon">📝</span>
-                <span class="toolbar-text">总结</span>
-            </button>
-            <button class="toolbar-btn" data-action="translate" title="翻译">
-                <span class="toolbar-icon">🌐</span>
-                <span class="toolbar-text">翻译</span>
-            </button>
+            <button class="toolbar-btn" data-action="explain" title="解释">解释</button>
+            <button class="toolbar-btn" data-action="summarize" title="总结">总结</button>
+            <button class="toolbar-btn" data-action="translate" title="翻译">翻译</button>
         </div>
 
+        <!-- ========== Modal ========== -->
         <div class="modal-overlay" id="apiKeyModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>🔑 配置API密钥</h3>
-                    <button class="modal-close-btn" id="closeModalBtn">×</button>
+                    <h3>配置API密钥</h3>
+                    <button class="modal-close-btn" id="closeModalBtn">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p class="modal-description">请配置智谱AI的API密钥以使用AI功能</p>
+                    <p class="modal-description">请配置AI服务的API密钥以使用AI功能</p>
                     <div class="form-group">
                         <label for="modalApiKeyInput">API密钥</label>
-                        <input type="password" id="modalApiKeyInput" class="api-key-input" placeholder="请输入您的智谱AI API密钥">
+                        <input type="password" id="modalApiKeyInput" class="api-key-input" placeholder="请输入API密钥">
                     </div>
                     <div class="modal-actions">
                         <button class="btn btn-secondary" id="modalCancelBtn">取消</button>
@@ -397,9 +401,13 @@
             </div>
         </div>
 
+        <!-- ========== Auth Overlay ========== -->
         <div class="auth-overlay" id="authOverlay">
             <div class="auth-card">
-                <h1 class="auth-logo">📚 AI阅读助手</h1>
+                <h1 class="auth-logo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    AI阅读助手
+                </h1>
                 <div class="auth-tabs">
                     <button class="auth-tab active" data-tab="login">登录</button>
                     <button class="auth-tab" data-tab="register">注册</button>
@@ -427,6 +435,7 @@
             </div>
         </div>
 
+        <!-- Toast -->
         <div class="toast" id="toast"></div>
     </div>
 

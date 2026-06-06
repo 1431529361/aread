@@ -10,7 +10,7 @@ const jschardet = require('jschardet');
 require('dotenv').config();
 
 const { initDB, getDB } = require('./database');
-const { authMiddleware, registerHandler, loginHandler, meHandler } = require('./auth');
+const { authMiddleware, registerHandler, loginHandler, meHandler, addDefaultBooksForUser } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -514,6 +514,9 @@ app.post('/api/books/upload', (req, res) => {
 });
 
 app.get('/api/books', (req, res) => {
+    // Auto-add default books for users who don't have them
+    addDefaultBooksForUser(req.user.id);
+
     const rows = db.prepare('SELECT * FROM books_meta WHERE user_id = ? ORDER BY upload_time DESC').all(req.user.id);
     const booksList = rows.map(r => ({
         id: r.id, title: r.title, filename: r.filename, original_name: r.original_name,
@@ -597,22 +600,56 @@ app.delete('/api/books/:id', (req, res) => {
 });
 
 app.put('/api/books/:id/progress', (req, res) => {
-    const userId = getUserId(req);
+    const userId = req.user.id;
     const bookId = req.params.id;
     const { progress } = req.body;
-    
-    const allBooks = loadBooksMeta();
-    const userBooks = allBooks[userId];
-    
-    if (!userBooks || !userBooks[bookId]) {
+
+    const row = db.prepare('SELECT id FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, userId);
+    if (!row) {
         return res.status(404).json({ error: '书籍不存在' });
     }
-    
-    allBooks[userId][bookId].readProgress = progress;
-    allBooks[userId][bookId].lastRead = new Date().toISOString();
-    saveBooksMeta(allBooks);
-    
+
+    db.prepare('UPDATE books_meta SET read_progress = ?, last_read = ? WHERE id = ? AND user_id = ?')
+        .run(progress, new Date().toISOString(), bookId, userId);
+
     res.json({ success: true });
+});
+
+// ==================== History Routes ====================
+
+app.get('/api/history', (req, res) => {
+    const rows = db.prepare(
+        'SELECT id, selected_text, question, answer, created_at FROM history WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
+    ).all(req.user.id);
+
+    const historyList = rows.map(r => ({
+        id: r.id,
+        text: r.selected_text || '',
+        question: r.question,
+        answer: r.answer,
+        time: r.created_at
+    }));
+
+    res.json({ history: historyList });
+});
+
+app.post('/api/history', (req, res) => {
+    const { text, question, answer } = req.body;
+
+    if (!question || !answer) {
+        return res.status(400).json({ error: '缺少必要参数' });
+    }
+
+    db.prepare(
+        'INSERT INTO history (user_id, selected_text, question, answer) VALUES (?, ?, ?, ?)'
+    ).run(req.user.id, text || '', question, answer);
+
+    res.json({ success: true });
+});
+
+app.delete('/api/history', (req, res) => {
+    db.prepare('DELETE FROM history WHERE user_id = ?').run(req.user.id);
+    res.json({ success: true, message: '历史记录已清空' });
 });
 
 app.post('/api/ask', async (req, res) => {
