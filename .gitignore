@@ -1,46 +1,47 @@
-# 依赖包
+# 渚濊禆鍖?
 node_modules/
 
-# 环境变量和密钥
+# 鐜��鍙橀噺鍜屽瘑閽?
 .env
 .env.local
 .env.*.local
 
-# API密钥存储
+# API瀵嗛挜瀛樺偍
 .api_keys.json
 
-# 自定义提供商
+# 鑷�畾涔夋彁渚涘晢
 .custom_providers.json
 
-# 用户数据
+# 鐢ㄦ埛鏁版嵁
 .users.json
 .books_meta.json
+data.db
 
-# 用户上传的书籍
+# 鐢ㄦ埛涓婁紶鐨勪功绫?
 books/
 
-# 日志文件
+# 鏃ュ織鏂囦欢
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# 系统文件
+# 绯荤粺鏂囦欢
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# IDE配置
+# IDE閰嶇疆
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# 临时文件
+# 涓存椂鏂囦欢
 *.tmp
 *.temp
 
-# 上传临时文件
+# 涓婁紶涓存椂鏂囦欢
 uploads/
 tmp/

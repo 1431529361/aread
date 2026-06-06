@@ -1,8 +1,8 @@
 # AI 阅读助手 (AI Reading Assistant)
 
-11一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、书架管理、自定义 AI 提供商等功能。
+一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、书架管理、自定义 AI 提供商等功能。
 
-##特性
+## 特性
 
 ### 📖 智能阅读
 
@@ -27,7 +27,15 @@
 - **多格式支持**：TXT、PDF、EPUB、MOBI（最大 50MB）
 - **上传进度**：实时显示上传进度条
 - **书籍操作**：在线阅读（TXT）、下载、删除
-- **多用户隔离**：基于 Cookie UUID 实现用户数据隔离
+- **数据隔离**：每个用户的书籍、书架、阅读进度完全独立
+
+### 👤 用户系统
+
+- **注册登录**：支持用户名+密码注册登录，用户名支持中文
+- **JWT 认证**：登录后自动保持登录状态（7天），支持"记住我"（30天）
+- **密码安全**：bcrypt 加密存储，不保存明文密码
+- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、问答历史完全独立
+- **历史同步**：AI 问答历史存储在服务器端，换设备也能查看
 
 ### 🔧 自定义 AI 提供商
 
@@ -49,9 +57,11 @@
 |------|------|
 | 后端 | Express.js 4.18.2 |
 | 前端 | 原生 JavaScript (ES6+) |
+| 数据库 | SQLite (sql.js - 纯 JS 实现，无需 C++ 编译) |
+| 用户认证 | JWT (jsonwebtoken) |
+| 密码加密 | bcryptjs |
 | 文件上传 | Multer |
 | 编码检测 | jschardet + iconv-lite |
-| 用户会话 | cookie-parser (UUID) |
 | 密钥加密 | crypto (AES-256-CBC) |
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
@@ -89,7 +99,7 @@ npm run dev
 
 1. 上传文件最大 50MB
 2. 流式输出使用 SSE，需浏览器支持
-3. 建议定期备份密钥和数据文件
+3. 建议定期备份 data.db 数据库文件
 4. 如需持久化保存 API 密钥，可配置 `ENCRYPTION_KEY` 环境变量（固定密钥，重启后不会丢失）
 
 ### 环境变量配置（可选）
@@ -151,6 +161,16 @@ PORT=3000
 
 ## API 接口文档
 
+### 用户认证
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/auth/register` | 注册新用户（username + password） |
+| POST | `/api/auth/login` | 用户登录，返回 JWT token |
+| GET | `/api/auth/me` | 获取当前登录用户信息 |
+
+> 除注册和登录外，所有 API 接口均需在请求头携带 `Authorization: Bearer <token>`
+
 ### AI 问答
 
 | 方法 | 路径 | 说明 |
@@ -192,24 +212,23 @@ PORT=3000
 ```
 trae02airead/
 ├── server.js              # Express 后端主服务
+├── database.js            # SQLite 数据库封装 (sql.js)
+├── auth.js                # 用户认证中间件
 ├── package.json           # 项目依赖配置
-├── .env.example          # 环境变量示例
-├── .gitignore            # Git 忽略配置
-├── README.md             # 项目文档
+├── .env                   # 环境变量配置
+├── .gitignore             # Git 忽略配置
+├── README.md              # 项目文档
 │
-├── public/               # 前端静态资源
-│   ├── index.html        # 主页面
-│   ├── styles.css        # 样式表
-│   └── app.js            # 前端逻辑
+├── public/                # 前端静态资源
+│   ├── index.html         # 主页面
+│   ├── styles.css         # 样式表
+│   └── app.js             # 前端逻辑
 │
-├── books/                # 书籍存储（运行时）
+├── books/                 # 书籍文件存储（运行时）
 │   └── {userId}/
 │
-├── node_modules/         # 依赖包
-├── .api_keys.json        # 加密密钥存储
-├── .books_meta.json      # 书籍元数据
-├── .custom_providers.json # 自定义提供商
-└── .users.json           # 用户数据
+├── data.db                # SQLite 数据库文件（运行时生成）
+└── node_modules/          # 依赖包
 ```
 
 ## 安全说明
@@ -217,20 +236,11 @@ trae02airead/
 1. **密钥加密**：所有 API 密钥使用 AES-256-CBC 加密存储
 2. **密钥保护**：`ENCRYPTION_KEY` 改变后无法解密旧密钥
 3. **数据隔离**：用户数据基于 UUID 隔离
-4. **敏感文件**：以下文件已加入 `.gitignore`：
+4. **数据库存储**：用户数据、API 密钥、书籍元数据等均存储在 SQLite 数据库 (data.db) 中
+5. **敏感文件**：以下文件已加入 `.gitignore`：
    - `.env`
-   - `.api_keys.json`
-   - `.custom_providers.json`
-   - `.books_meta.json`
-   - `.users.json`
+   - `data.db`
    - `books/`
-
-## 注意事项
-
-1. 首次运行前必须配置 `ENCRYPTION_KEY`
-2. 上传文件最大 50MB
-3. 流式输出使用 SSE，需浏览器支持
-4. 建议定期备份密钥和数据文件
 
 ## 许可证
 
