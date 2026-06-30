@@ -1,8 +1,0 @@
-schema_version: 1
-module_path: frontend_static
-title: AI阅读助手前端交互模块
-scope:
-    - public/
-source_files: []
-depends_on: []
-related_to: []

@@ -22,11 +22,28 @@
 - **模型显示**：回答中实时显示当前使用的 AI 提供商和模型信息
 - **对话历史**：自动保存最近 50 条问答记录，随时回顾
 
+### 🧠 Agent 智能体
+
+- **Function Calling 工具 Agent**：开启"Agent 模式"后，AI 自主决定调用工具查阅全书内容，而非仅依赖选中文本
+  - 内置 5 个工具：`searchInBook`（全书检索）、`getChapterInfo`（章节内容）、`summarizeSection`（摘要）、`translateText`（翻译）、`lookupCharacter`（人物查找）
+  - ReAct 风格多轮工具调用循环（思考→调用工具→观察结果→再推理）
+  - 实时展示 Agent 思考链与工具调用 trace
+- **RAG 检索增强**：为书籍建立智能索引，实现"全书级"问答
+  - 章节边界 + 滑动窗口分块
+  - BM25 关键词检索（默认，纯 JS 无依赖）+ 可选 Embedding 向量召回
+  - 向量索引持久化，支持跨会话复用
+- **Multi-Agent 任务编排**：复杂阅读任务自动拆解为子 Agent 并行执行
+  - 读书笔记生成：大纲 → 逐章并行摘要 → 批判性点评 → 整合输出
+  - 人物关系分析：人物检测 → 并行人物分析 → 关系图谱整合
+  - DAG 拓扑排序并行调度，节点失败自动降级
+- **安全防护**：最大 8 轮工具调用 + 单工具 5 次熔断，防止死循环；模型不支持 Function Calling 时自动降级为普通问答
+
 ### 📚 书架管理
 
 - **多格式支持**：TXT、PDF、EPUB、MOBI（最大 50MB）
 - **上传进度**：实时显示上传进度条
 - **书籍操作**：在线阅读（TXT）、下载、删除
+- **AI 智能任务**（TXT）：一键建立 RAG 索引、生成读书笔记、人物关系分析
 - **数据隔离**：每个用户的书籍、书架、阅读进度完全独立
 
 ### 👤 用户系统
@@ -65,6 +82,9 @@
 | 密钥加密 | crypto (AES-256-CBC) |
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
+| Agent 引擎 | Function Calling + ReAct 循环（[agent.js](agent.js)） |
+| RAG 检索 | BM25 + 可选 Embedding 向量召回（[rag.js](rag.js)） |
+| 多 Agent 编排 | DAG 拓扑排序并行调度（[orchestrator.js](orchestrator.js)） |
 
 ## 快速开始
 
@@ -150,6 +170,47 @@ PORT=3000
 ]
 ```
 
+## Agent 智能体使用指南
+
+### 1. Agent 模式问答（工具调用）
+
+在阅读页打开 AI 面板，开启顶部的 **"Agent 模式"** 开关后提问：
+
+- Agent 会自主判断是否需要调用工具（如检索全书其他章节）
+- trace 区实时展示思考链、工具调用参数与返回结果
+- 若问题可直接基于选中文本回答，Agent 不会调用工具，直接输出答案
+
+> **模型要求**：需所配置模型支持 Function Calling（如 GLM-4 系列、DeepSeek 等）。不支持时自动降级为普通流式问答，不影响使用。
+
+### 2. RAG 智能索引
+
+在书架的 TXT 书籍卡片上点击 **"AI索引"** 按钮：
+
+- 系统按章节边界 + 滑动窗口将全书分块
+- 默认使用 BM25 关键词检索（纯 JS，无外部依赖）
+- 若提供商支持 Embedding（智谱 / 硅基流动），自动升级为向量检索，召回更精准
+- 索引持久化到 `rag_index/<userId>/<bookId>.json`，跨会话可复用
+- 建立索引后，Agent 模式中的 `searchInBook` 工具会优先使用该索引
+
+### 3. Multi-Agent 任务
+
+在书架的 TXT 书籍卡片上点击 **"读书笔记"** 按钮，或调用 `/api/agent/task` 接口：
+
+- **读书笔记生成**（`generate-notes`）：大纲 Agent → 逐章并行摘要 Agent → 点评 Agent → 整合 Agent，输出完整 Markdown 读书笔记
+- **人物关系分析**（`character-analysis`）：人物检测 Agent → 并行人物分析 Agent → 关系整合 Agent，输出人物关系图谱
+
+任务执行过程中，弹窗实时展示各子 Agent 的启动/进度/完成状态，最终结果以 Markdown 渲染呈现。
+
+### Agent 工具说明
+
+| 工具 | 功能 | 触发场景 |
+|------|------|----------|
+| `searchInBook` | 全书 RAG 检索相关段落 | 问题超出选中文本范围 |
+| `getChapterInfo` | 获取指定章节内容 | 需查阅特定章节 |
+| `summarizeSection` | 总结指定文本 | 用户想快速了解大段内容 |
+| `translateText` | 翻译文本 | 跨语言理解需求 |
+| `lookupCharacter` | 查找人物出场上下文 | 人物形象/关系分析 |
+
 ## 文件编码支持
 
 系统自动检测 TXT 文件编码，支持：
@@ -177,6 +238,34 @@ PORT=3000
 |------|------|------|
 | POST | `/api/ask` | 非流式 AI 问答 |
 | POST | `/api/ask-stream` | 流式 AI 问答（SSE） |
+
+### Agent 智能体
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/agent/stream` | Function Calling Agent 流式问答（SSE，推送思考链/工具调用/最终答案） |
+| GET | `/api/agent/tasks` | 获取可用的 Multi-Agent 任务列表 |
+| POST | `/api/agent/task` | 执行 Multi-Agent 任务（SSE，推送节点进度与最终结果） |
+
+**Agent 流式事件类型**（`/api/agent/stream` 返回的 SSE data）：
+
+| 事件 type | 含义 |
+|-----------|------|
+| `start` | Agent 启动，返回模型/提供商信息 |
+| `thought` | Agent 中间思考内容 |
+| `tool_call` | 发起工具调用（含工具名、参数、轮次） |
+| `tool_result` | 工具执行结果（含耗时） |
+| `fallback` | 模型不支持 Function Calling，降级为普通问答 |
+| `final_start` | 进入最终答案流式输出 |
+| `chunk` | 最终答案文本片段 |
+| `end` | Agent 结束 |
+
+**Multi-Agent 任务类型**（`/api/agent/task` 的 `taskType`）：
+
+| taskType | 任务 | DAG 节点 |
+|----------|------|----------|
+| `generate-notes` | 读书笔记生成 | 大纲 → 并行摘要 → 点评 → 整合 |
+| `character-analysis` | 人物关系分析 | 人物检测 → 并行分析 → 关系整合 |
 
 ### 密钥管理
 
@@ -206,6 +295,9 @@ PORT=3000
 | GET | `/api/books/:bookId/download` | 下载书籍 |
 | DELETE | `/api/books/:bookId` | 删除书籍 |
 | PUT | `/api/books/:bookId/progress` | 保存阅读进度 |
+| POST | `/api/books/:bookId/index` | 建立 RAG 智能索引（仅 TXT） |
+| GET | `/api/books/:bookId/index-status` | 查询 RAG 索引状态 |
+| DELETE | `/api/books/:bookId/index` | 删除 RAG 索引 |
 
 ## 项目结构
 
@@ -214,6 +306,9 @@ trae02airead/
 ├── server.js              # Express 后端主服务
 ├── database.js            # SQLite 数据库封装 (sql.js)
 ├── auth.js                # 用户认证中间件
+├── agent.js               # Function Calling Agent 引擎（ReAct 循环 + 工具调用）
+├── rag.js                 # RAG 检索增强（分块 + BM25 + 可选 Embedding）
+├── orchestrator.js        # Multi-Agent DAG 编排引擎
 ├── package.json           # 项目依赖配置
 ├── .env                   # 环境变量配置
 ├── .gitignore             # Git 忽略配置
@@ -226,6 +321,9 @@ trae02airead/
 │
 ├── books/                 # 书籍文件存储（运行时）
 │   └── {userId}/
+│
+├── rag_index/             # RAG 向量索引存储（运行时）
+│   └── {userId}/{bookId}.json
 │
 ├── data.db                # SQLite 数据库文件（运行时生成）
 └── node_modules/          # 依赖包
@@ -241,6 +339,7 @@ trae02airead/
    - `.env`
    - `data.db`
    - `books/`
+   - `rag_index/`（RAG 向量索引）
 
 ## 许可证
 

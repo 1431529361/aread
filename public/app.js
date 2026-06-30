@@ -12,6 +12,7 @@ class AIReadingAssistant {
         this.currentBook = null;
         this.currentBookContent = null;
         this.isReading = false;
+        this.agentMode = false;
         this.toolbarsVisible = false;
 
         this.token = localStorage.getItem('authToken') || null;
@@ -171,6 +172,8 @@ class AIReadingAssistant {
         this.modelRow = document.getElementById('modelRow');
         this.modelValue = document.getElementById('modelValue');
         this.apiInfoList = document.getElementById('apiInfoList');
+        this.agentTrace = document.getElementById('agentTrace');
+        this.agentTaskModal = document.getElementById('agentTaskModal');
     }
 
     // ==================== Event Listeners ====================
@@ -203,6 +206,20 @@ class AIReadingAssistant {
         this.askBtn.addEventListener('click', () => this.handleAskQuestion());
         this.questionInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.ctrlKey) this.handleAskQuestion(); });
         document.getElementById('aiSheetClose').addEventListener('click', () => this.closeAIPanel());
+
+        // Agent mode toggle
+        const agentToggle = document.getElementById('agentModeToggle');
+        if (agentToggle) agentToggle.addEventListener('change', (e) => {
+            this.agentMode = e.target.checked;
+            this.agentTrace.style.display = this.agentMode ? 'block' : 'none';
+            if (!this.agentMode) this.agentTrace.innerHTML = '';
+        });
+
+        // Agent task modal
+        const taskCloseBtn = document.getElementById('agentTaskCloseBtn');
+        const taskCancelBtn = document.getElementById('agentTaskCancelBtn');
+        if (taskCloseBtn) taskCloseBtn.addEventListener('click', () => this.closeTaskModal());
+        if (taskCancelBtn) taskCancelBtn.addEventListener('click', () => this.closeTaskModal());
 
         // Reading view controls
         document.getElementById('exitReadingBtn').addEventListener('click', () => this.exitReading());
@@ -379,6 +396,7 @@ class AIReadingAssistant {
                     </div>
                     <div class="book-actions-row">
                         <button class="book-action-btn read-btn">阅读</button>
+                        ${book.format.toLowerCase() === 'txt' ? '<button class="book-action-btn index-btn">AI索引</button><button class="book-action-btn notes-btn">读书笔记</button>' : ''}
                         <button class="book-action-btn delete-btn">删除</button>
                     </div>
                 </div>`;
@@ -388,6 +406,10 @@ class AIReadingAssistant {
             const bookId = card.dataset.bookId;
             card.querySelector('.read-btn').addEventListener('click', (e) => { e.stopPropagation(); this.openBook(bookId); });
             card.querySelector('.delete-btn').addEventListener('click', (e) => { e.stopPropagation(); this.deleteBook(bookId); });
+            const indexBtn = card.querySelector('.index-btn');
+            if (indexBtn) indexBtn.addEventListener('click', (e) => { e.stopPropagation(); this.indexBook(bookId); });
+            const notesBtn = card.querySelector('.notes-btn');
+            if (notesBtn) notesBtn.addEventListener('click', (e) => { e.stopPropagation(); this.runAgentTask('generate-notes', bookId); });
             card.addEventListener('click', () => this.openBook(bookId));
         });
     }
@@ -762,6 +784,7 @@ class AIReadingAssistant {
     }
 
     async askAI(question) {
+        if (this.agentMode) return this.askAgent(question);
         this.askBtn.classList.add('loading');
         this.askBtn.disabled = true;
         this.responseContent.innerHTML = '<p class="placeholder-text">AI正在思考中...</p>';
@@ -849,6 +872,243 @@ class AIReadingAssistant {
             this.askBtn.disabled = false;
             this.questionInput.value = '';
         }
+    }
+
+    // ==================== Agent (Function Calling + RAG + Multi-Agent) ====================
+
+    async askAgent(question) {
+        this.askBtn.classList.add('loading');
+        this.askBtn.disabled = true;
+        this.responseContent.innerHTML = '<p class="placeholder-text">Agent 正在思考...</p>';
+        this.agentTrace.innerHTML = '';
+        this.agentTrace.style.display = 'block';
+
+        try {
+            const response = await this.apiFetch('/api/agent/stream', {
+                method: 'POST',
+                body: JSON.stringify({
+                    text: this.selectedText, question, bookName: this.getCurrentBookName(),
+                    provider: this.currentProvider, model: this.currentModel,
+                    bookId: this.currentBook ? this.currentBook.id : null
+                })
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                if (data.needApiKey) {
+                    const pi = this.providers.find(p => p.id === (data.provider || this.currentProvider));
+                    this.responseContent.innerHTML = `<div class="api-warning"><span class="api-warning-icon">⚠️</span><div class="api-warning-text"><strong>需要配置API密钥</strong>请先配置${pi ? pi.name : 'AI'}的API密钥</div></div>`;
+                    this.checkApiKeyStatus();
+                } else {
+                    this.responseContent.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(data.error)}</p>`;
+                }
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '', fullContent = '', pendingChunk = '', rafId = null;
+            this.responseContent.innerHTML = '<div class="answer-content"></div>';
+            const answerEl = this.responseContent.querySelector('.answer-content');
+
+            const flushChunk = () => {
+                if (!pendingChunk || !answerEl) return;
+                const text = pendingChunk;
+                pendingChunk = '';
+                const parts = text.split('\n');
+                parts.forEach((part, i) => {
+                    if (part) answerEl.appendChild(document.createTextNode(part));
+                    if (i < parts.length - 1) answerEl.appendChild(document.createElement('br'));
+                });
+                answerEl.scrollTop = answerEl.scrollHeight;
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    if (rafId) cancelAnimationFrame(rafId);
+                    flushChunk();
+                    break;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const evt = JSON.parse(line.slice(6));
+                        if (evt.type === 'start') {
+                            const rh = document.querySelector('#aiPanelSheet .response-header');
+                            if (rh) rh.innerHTML = `<span class="response-label">Agent 回答：</span><span class="model-tag-inline">${evt.provider} · ${evt.model}</span>`;
+                        } else if (evt.type === 'thought') {
+                            this.appendTraceItem('thought', `💭 思考：${evt.content}`, evt.iteration);
+                        } else if (evt.type === 'tool_call') {
+                            this.appendTraceItem('tool_call', `🔧 调用工具：${evt.name}(${JSON.stringify(evt.args)})`, evt.iteration);
+                        } else if (evt.type === 'tool_result') {
+                            const rs = JSON.stringify(evt.result);
+                            this.appendTraceItem('tool_result', `✅ 结果：${rs.substring(0, 200)}${rs.length > 200 ? '...' : ''}（${evt.elapsed}ms）`, evt.iteration);
+                        } else if (evt.type === 'fallback') {
+                            this.appendTraceItem('fallback', `⚠️ ${evt.reason}`);
+                        } else if (evt.type === 'final_start') {
+                            if (answerEl) answerEl.innerHTML = '';
+                        } else if (evt.type === 'chunk') {
+                            fullContent += evt.content;
+                            pendingChunk += evt.content;
+                            if (!rafId) {
+                                rafId = requestAnimationFrame(() => { rafId = null; flushChunk(); });
+                            }
+                        } else if (evt.type === 'end') {
+                            if (this.selectedText) this.saveToHistory(this.selectedText, question, fullContent);
+                        } else if (evt.type === 'error') {
+                            this.responseContent.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(evt.error)}</p>`;
+                        }
+                    } catch {}
+                }
+            }
+        } catch {
+            this.responseContent.innerHTML = '<p style="color:#ef4444;">网络错误</p>';
+        } finally {
+            this.askBtn.classList.remove('loading');
+            this.askBtn.disabled = false;
+            this.questionInput.value = '';
+        }
+    }
+
+    appendTraceItem(cls, text, iteration) {
+        if (!this.agentTrace) return;
+        const item = document.createElement('div');
+        item.className = `trace-item trace-${cls}`;
+        item.innerHTML = `<span class="trace-iter">${iteration ? `#${iteration} ` : ''}</span>${this.escapeHtml(text)}`;
+        this.agentTrace.appendChild(item);
+        this.agentTrace.scrollTop = this.agentTrace.scrollHeight;
+    }
+
+    async indexBook(bookId) {
+        if (!this.isProviderConfigured()) { this.showModal(); return; }
+        const book = this.books.find(b => b.id === bookId);
+        this.openTaskModal('建立智能索引');
+        this.appendTaskLog(`<div class="log-info">正在为《${book ? book.title : ''}》建立 RAG 索引...</div>`);
+        this.setTaskProgress(30, '正在分块与向量化...');
+        try {
+            const response = await this.apiFetch(`/api/books/${bookId}/index`, {
+                method: 'POST',
+                body: JSON.stringify({ provider: this.currentProvider, model: this.currentModel })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                const modeText = data.mode === 'embedding+bm25' ? '向量+BM25' : 'BM25 关键词';
+                this.appendTaskLog(`<div class="log-success">✅ 索引完成：${data.chunkCount} 个文本块，模式：${modeText}</div>`);
+                this.setTaskProgress(100, '索引完成');
+            } else {
+                this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`);
+                this.setTaskProgress(0, '索引失败');
+            }
+        } catch {
+            this.appendTaskLog(`<div class="log-error">❌ 网络错误</div>`);
+        }
+    }
+
+    async runAgentTask(taskType, bookId) {
+        if (!this.isProviderConfigured()) { this.showModal(); return; }
+        const book = this.books.find(b => b.id === bookId);
+        const titleMap = { 'generate-notes': '生成读书笔记', 'character-analysis': '人物关系分析' };
+        this.openTaskModal(titleMap[taskType] || 'AI 智能任务');
+        this.appendTaskLog(`<div class="log-info">开始为《${book ? book.title : ''}》执行：${titleMap[taskType] || taskType}</div>`);
+
+        try {
+            const response = await this.apiFetch('/api/agent/task', {
+                method: 'POST',
+                body: JSON.stringify({ taskType, bookId, provider: this.currentProvider, model: this.currentModel })
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`);
+                return;
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const evt = JSON.parse(line.slice(6));
+                        if (evt.type === 'task_start') {
+                            this.appendTaskLog(`<div class="log-info">📋 任务：${evt.taskName}（${evt.nodes.length} 个子 Agent 并行编排）</div>`);
+                        } else if (evt.type === 'node_start') {
+                            this.appendTaskLog(`<div class="log-node">▶️ ${evt.name} 启动</div>`);
+                        } else if (evt.type === 'node_progress') {
+                            this.appendTaskLog(`<div class="log-progress">　${evt.stage || ''}</div>`);
+                        } else if (evt.type === 'node_done') {
+                            this.appendTaskLog(`<div class="log-success">✅ ${evt.name} 完成</div>`);
+                        } else if (evt.type === 'node_error') {
+                            this.appendTaskLog(`<div class="log-error">⚠️ ${evt.name} 失败：${evt.error}（已降级跳过）</div>`);
+                        } else if (evt.type === 'progress') {
+                            this.setTaskProgress(evt.percent, `${evt.progress}/${evt.total} 节点完成`);
+                        } else if (evt.type === 'result') {
+                            const final = evt.final || {};
+                            const content = final.note || final.report || '';
+                            if (content) this.renderTaskResult(content);
+                        } else if (evt.type === 'task_done') {
+                            this.setTaskProgress(100, '任务完成');
+                        } else if (evt.type === 'error') {
+                            this.appendTaskLog(`<div class="log-error">❌ ${evt.error}</div>`);
+                        }
+                    } catch {}
+                }
+            }
+        } catch {
+            this.appendTaskLog(`<div class="log-error">❌ 网络错误</div>`);
+        }
+    }
+
+    openTaskModal(title) {
+        document.getElementById('agentTaskTitle').textContent = title || 'AI 智能任务';
+        document.getElementById('taskLog').innerHTML = '';
+        document.getElementById('taskResult').style.display = 'none';
+        document.getElementById('taskResult').innerHTML = '';
+        this.setTaskProgress(0, '准备中...');
+        this.agentTaskModal.classList.add('visible');
+    }
+
+    closeTaskModal() {
+        this.agentTaskModal.classList.remove('visible');
+    }
+
+    appendTaskLog(html) {
+        const log = document.getElementById('taskLog');
+        const line = document.createElement('div');
+        line.innerHTML = html;
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    setTaskProgress(percent, text) {
+        document.getElementById('taskProgressFill').style.width = percent + '%';
+        document.getElementById('taskProgressText').textContent = text;
+    }
+
+    renderTaskResult(content) {
+        const result = document.getElementById('taskResult');
+        result.style.display = 'block';
+        result.innerHTML = this.renderMarkdown(content);
+    }
+
+    renderMarkdown(text) {
+        if (!text) return '';
+        let html = this.escapeHtml(text);
+        html = html.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+        html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\n/g, '<br>');
+        return html;
     }
 
     // ==================== Providers ====================

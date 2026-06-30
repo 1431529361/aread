@@ -20,6 +20,9 @@ data.db
 # 鐢ㄦ埛涓婁紶鐨勪功绫?
 books/
 
+# RAG 向量索引
+rag_index/
+
 # 鏃ュ織鏂囦欢
 *.log
 npm-debug.log*

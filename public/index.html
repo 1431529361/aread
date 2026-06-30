@@ -327,6 +327,14 @@
                             <div class="selected-text-label">选中的文本：</div>
                             <div class="selected-text-content" id="selectedTextContent"></div>
                         </div>
+                        <div class="agent-mode-row">
+                            <label class="agent-mode-toggle">
+                                <input type="checkbox" id="agentModeToggle">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">Agent 模式</span>
+                            </label>
+                            <span class="agent-mode-hint">启用工具调用与全书检索</span>
+                        </div>
                         <div class="quick-actions">
                             <button class="quick-action-btn" data-action="explain">解释说明</button>
                             <button class="quick-action-btn" data-action="summarize">总结概括</button>
@@ -344,6 +352,7 @@
                             <div class="response-header">
                                 <span class="response-label">AI回答：</span>
                             </div>
+                            <div class="agent-trace" id="agentTrace" style="display:none"></div>
                             <div class="response-content" id="responseContent">
                                 <p class="placeholder-text">选中文字后，点击快捷操作或输入问题</p>
                             </div>
@@ -396,6 +405,27 @@
                     <div class="modal-actions">
                         <button class="btn btn-secondary" id="modalCancelBtn">取消</button>
                         <button class="btn btn-primary" id="modalSaveBtn">保存并验证</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== Agent Task Modal ========== -->
+        <div class="modal-overlay" id="agentTaskModal">
+            <div class="modal-content agent-task-modal">
+                <div class="modal-header">
+                    <h3 id="agentTaskTitle">AI 智能任务</h3>
+                    <button class="modal-close-btn" id="agentTaskCloseBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="task-progress" id="taskProgress">
+                        <div class="task-progress-bar"><div class="task-progress-fill" id="taskProgressFill" style="width:0%"></div></div>
+                        <div class="task-progress-text" id="taskProgressText">准备中...</div>
+                    </div>
+                    <div class="task-log" id="taskLog"></div>
+                    <div class="task-result" id="taskResult" style="display:none"></div>
+                    <div class="modal-actions">
+                        <button class="btn btn-secondary" id="agentTaskCancelBtn">关闭</button>
                     </div>
                 </div>
             </div>

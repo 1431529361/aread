@@ -7,9 +7,17 @@
 - [server.js](file://server.js)
 - [public/app.js](file://public/app.js)
 - [public/index.html](file://public/index.html)
+- [public/styles.css](file://public/styles.css)
 - [database.js](file://database.js)
 - [auth.js](file://auth.js)
 </cite>
+
+## 更新摘要
+**所做更改**
+- 更新浮动工具栏系统章节，反映新的位置自适应和智能显示机制
+- 新增主题切换和字体大小控制功能的详细说明
+- 完善AI助手面板的交互流程和用户界面改进
+- 增强API密钥管理和自定义提供商功能的文档
 
 ## 目录
 1. [简介](#简介)
@@ -32,6 +40,8 @@ AI阅读助手是一个现代化的智能阅读应用，集成了多AI服务提�
 - **流式输出**：SSE流式传输，打字机效果，提升阅读体验
 - **书架管理**：支持多格式书籍上传、下载、删除
 - **用户系统**：JWT认证，密码安全存储
+- **主题切换**：支持浅色、深色、棕褐色主题模式
+- **字体大小控制**：可调节阅读字体大小，提升阅读舒适度
 
 ## 项目结构
 
@@ -43,6 +53,8 @@ subgraph "前端 (public/)"
 HTML[HTML页面]
 CSS[样式表]
 JS[JavaScript逻辑]
+THEME[主题系统]
+FONTSIZE[字体大小控制]
 end
 subgraph "后端 (根目录)"
 Server[Express服务器]
@@ -58,6 +70,8 @@ end
 HTML --> Server
 CSS --> Server
 JS --> Server
+THEME --> CSS
+FONTSIZE --> JS
 Server --> Auth
 Server --> DB
 DB --> SQLite
@@ -68,6 +82,7 @@ Server --> Keys
 **图表来源**
 - [server.js:1-50](file://server.js#L1-L50)
 - [public/index.html:1-50](file://public/index.html#L1-L50)
+- [public/styles.css:24-40](file://public/styles.css#L24-L40)
 
 **章节来源**
 - [README.md:210-232](file://README.md#L210-L232)
@@ -80,15 +95,28 @@ Server --> Keys
 AI助手功能是整个应用的核心，提供了完整的文本选择和AI问答体验：
 
 #### 浮动工具栏
-- **位置自适应**：根据选中文本位置自动调整工具栏位置
+- **智能位置自适应**：根据选中文本位置自动调整工具栏位置，避免超出屏幕边界
 - **快捷操作**：提供AI提问、解释说明、总结概括、翻译等快捷按钮
-- **智能显示**：仅在选中有意义文本时显示
+- **智能显示隐藏**：仅在选中有意义文本时显示，点击空白处自动隐藏
+- **响应式设计**：支持不同屏幕尺寸的自适应布局
 
 #### AI问答面板
 - **选中文本框**：实时显示选中的文本内容
 - **快捷操作按钮**：四种预设问题类型
 - **自定义问题输入**：支持用户自定义问题
 - **流式响应显示**：实时显示AI回答过程
+
+#### 主题切换系统
+- **多主题支持**：浅色、深色、棕褐色三种主题模式
+- **实时切换**：无需刷新页面即可切换主题
+- **主题预览**：提供主题卡片预览功能
+- **状态保持**：用户选择的主题会持久化保存
+
+#### 字体大小控制
+- **可调节范围**：支持12px到24px的字体大小调节
+- **实时预览**：调节时实时显示当前字体大小
+- **阅读优化**：针对阅读体验优化的字体大小范围
+- **个性化设置**：每个用户的字体大小设置独立保存
 
 #### API密钥管理
 - **多提供商支持**：内置智谱AI和硅基流动，支持自定义提供商
@@ -98,6 +126,8 @@ AI助手功能是整个应用的核心，提供了完整的文本选择和AI问�
 **章节来源**
 - [public/app.js:1323-1413](file://public/app.js#L1323-L1413)
 - [public/index.html:139-178](file://public/index.html#L139-L178)
+- [public/styles.css:24-40](file://public/styles.css#L24-L40)
+- [public/index.html:106-111](file://public/index.html#L106-L111)
 
 ## 架构概览
 
@@ -107,12 +137,16 @@ AI助手功能是整个应用的核心，提供了完整的文本选择和AI问�
 sequenceDiagram
 participant User as 用户
 participant Frontend as 前端应用
+participant Theme as 主题系统
+participant FontSize as 字体大小控制
 participant Backend as 后端服务器
 participant AI as AI提供商
 participant Database as 数据库
 User->>Frontend : 选中文本
 Frontend->>Frontend : 显示浮动工具栏
 User->>Frontend : 点击快捷操作
+Frontend->>Theme : 应用主题切换
+Frontend->>FontSize : 调整字体大小
 Frontend->>Backend : 发送AI请求
 Backend->>Database : 验证API密钥
 Backend->>AI : 转发AI请求
@@ -125,6 +159,7 @@ Frontend-->>User : 显示AI回答
 **图表来源**
 - [server.js:688-800](file://server.js#L688-L800)
 - [public/app.js:1423-1515](file://public/app.js#L1423-L1515)
+- [public/styles.css:472-505](file://public/styles.css#L472-L505)
 
 ### 数据流架构
 
@@ -139,11 +174,17 @@ Action --> Summarize[总结概括]
 Action --> Translate[翻译]
 Action --> Expand[扩展阅读]
 Action --> Custom[自定义问题]
+Action --> Theme[主题切换]
+Action --> FontSize[字体大小调节]
 Explain --> Ask[发送AI请求]
 Summarize --> Ask
 Translate --> Ask
 Expand --> Ask
 Custom --> Ask
+Theme --> ApplyTheme[应用主题]
+FontSize --> ApplyFont[调整字体]
+ApplyTheme --> SaveTheme[保存主题设置]
+ApplyFont --> SaveFont[保存字体设置]
 Ask --> Validate[验证API密钥]
 Validate --> Valid{密钥有效?}
 Valid --> |否| KeyPrompt[提示配置密钥]
@@ -159,6 +200,7 @@ NoAction --> End
 **图表来源**
 - [public/app.js:1388-1421](file://public/app.js#L1388-L1421)
 - [server.js:618-688](file://server.js#L618-L688)
+- [public/styles.css:472-505](file://public/styles.css#L472-L505)
 
 ## 详细组件分析
 
@@ -176,6 +218,8 @@ class FloatingToolbar {
 +handleToolbarAction(e)
 +handleTextSelection(e)
 +handleMouseDown(e)
++calculatePosition(rect)
++avoidScreenBoundary(w, h, left, top)
 }
 class AIReadingAssistant {
 +Object floatingToolbar
@@ -194,14 +238,100 @@ AIReadingAssistant --> FloatingToolbar : "控制"
 - [public/app.js:1404-1413](file://public/app.js#L1404-L1413)
 
 #### 工具栏功能特性
-- **智能定位**：根据选中文本边界计算最佳显示位置
-- **响应式设计**：自动避免超出屏幕边界
-- **快捷操作**：四种预设操作类型
-- **无障碍支持**：键盘快捷键支持
+- **智能定位算法**：根据选中文本边界计算最佳显示位置，包含边界检测
+- **响应式设计**：自动避免超出屏幕边界，确保工具栏完全可见
+- **快捷操作**：四种预设操作类型，支持键盘快捷键
+- **无障碍支持**：支持Tab导航和键盘操作
+- **自动隐藏机制**：点击空白区域或失去焦点时自动隐藏
 
 **章节来源**
 - [public/app.js:1343-1386](file://public/app.js#L1343-L1386)
 - [public/index.html:361-378](file://public/index.html#L361-L378)
+
+### 主题切换系统
+
+主题切换系统提供了灵活的视觉定制功能：
+
+#### 主题架构
+```mermaid
+classDiagram
+class ThemeSystem {
++String currentTheme
++applyTheme(themeName)
++toggleTheme()
++saveThemePreference(themeName)
++loadThemePreference()
+}
+class ThemeCard {
++String themeName
++String previewClass
++renderPreview()
++selectTheme()
+}
+class ThemeSelector {
++Array themeCards
++renderThemeSelector()
++handleThemeChange(e)
+}
+ThemeSystem --> ThemeCard : "管理"
+ThemeCard --> ThemeSelector : "包含"
+```
+
+**图表来源**
+- [public/styles.css:24-40](file://public/styles.css#L24-L40)
+- [public/styles.css:472-505](file://public/styles.css#L472-L505)
+
+#### 主题功能特性
+- **多主题支持**：浅色(light)、深色(dark)、棕褐色(sepia)三种主题模式
+- **CSS变量系统**：使用CSS自定义属性实现主题切换
+- **实时预览**：点击主题卡片即可预览效果
+- **状态保持**：用户选择的主题会持久化到本地存储
+- **响应式设计**：每种主题都有专门的颜色方案
+
+**章节来源**
+- [public/styles.css:24-40](file://public/styles.css#L24-L40)
+- [public/styles.css:472-505](file://public/styles.css#L472-L505)
+
+### 字体大小控制系统
+
+字体大小控制系统提供了个性化的阅读体验：
+
+#### 控制器结构
+```mermaid
+classDiagram
+class FontSizeController {
++Number currentFontSize
++Number minFontSize
++Number maxFontSize
++initFontSizeControl()
++updateFontSizeDisplay(fontSize)
++applyFontSize(fontSize)
++saveFontSizePreference(fontSize)
+}
+class FontSizeControl {
++HTMLElement displayElement
++HTMLElement sliderElement
++HTMLElement incrementBtn
++HTMLElement decrementBtn
++bindEvents()
+}
+FontSizeController --> FontSizeControl : "管理"
+```
+
+**图表来源**
+- [public/index.html:106-111](file://public/index.html#L106-L111)
+- [public/index.html:292-295](file://public/index.html#L292-L295)
+
+#### 字体控制特性
+- **调节范围**：12px到24px的线性调节范围
+- **实时显示**：滑块移动时实时显示当前字体大小
+- **多种控制方式**：滑块、按钮、键盘快捷键
+- **阅读优化**：针对长时间阅读优化的字体大小范围
+- **个性化保存**：每个用户的字体大小设置独立保存
+
+**章节来源**
+- [public/index.html:106-111](file://public/index.html#L106-L111)
+- [public/index.html:292-295](file://public/index.html#L292-L295)
 
 ### AI问答面板组件
 
@@ -309,6 +439,8 @@ React[原生JavaScript]
 DOM[DOM操作]
 Fetch[Fetch API]
 SSE[Server-Sent Events]
+Theme[主题系统]
+FontSize[字体大小控制]
 end
 subgraph "后端依赖"
 Express[Express框架]
@@ -325,6 +457,8 @@ React --> Express
 DOM --> Express
 Fetch --> Express
 SSE --> Express
+Theme --> React
+FontSize --> React
 Express --> JWT
 Express --> Crypto
 Express --> SQLite
@@ -421,6 +555,13 @@ USERS ||--o{ HISTORY : has
 - **虚拟滚动**：对大量历史记录使用虚拟滚动
 - **懒加载**：图片和大文件按需加载
 - **缓存策略**：合理使用localStorage缓存用户偏好
+- **主题切换优化**：CSS变量切换比DOM操作更高效
+
+### 主题和字体控制性能
+- **CSS变量切换**：主题切换使用CSS自定义属性，性能优异
+- **局部更新**：字体大小调整只影响相关元素
+- **防抖处理**：频繁的字体调节使用防抖优化
+- **硬件加速**：使用transform属性实现平滑动画
 
 ## 故障排除指南
 
@@ -459,9 +600,32 @@ USERS ||--o{ HISTORY : has
    - 检查"记住我"选项
    - 验证服务器时间同步
 
+#### 主题切换问题
+1. **主题不生效**
+   - 检查CSS变量是否正确应用
+   - 确认主题类名是否正确
+   - 验证浏览器兼容性
+
+2. **主题切换卡顿**
+   - 检查CSS动画性能
+   - 确认没有其他样式冲突
+   - 验证硬件加速支持
+
+#### 字体大小控制问题
+1. **字体调节无效**
+   - 检查滑块事件绑定
+   - 确认CSS样式应用
+   - 验证数值范围限制
+
+2. **字体大小不持久**
+   - 检查localStorage支持
+   - 确认保存函数调用
+   - 验证数据序列化
+
 **章节来源**
 - [server.js:212-235](file://server.js#L212-L235)
 - [public/app.js:1225-1248](file://public/app.js#L1225-L1248)
+- [public/styles.css:24-40](file://public/styles.css#L24-L40)
 
 ### 调试技巧
 
@@ -470,6 +634,7 @@ USERS ||--o{ HISTORY : has
 - 检查控制台错误信息
 - 监控SSE连接状态
 - 分析内存使用情况
+- 检查CSS变量应用情况
 
 #### 后端调试
 - 查看服务器日志输出
@@ -491,12 +656,14 @@ AI阅读助手项目展现了现代Web应用开发的最佳实践，通过以下
 - **架构清晰**：前后端分离，职责明确
 - **安全性强**：JWT认证、API密钥加密存储
 - **扩展性好**：支持自定义AI提供商
-- **用户体验佳**：流式响应、智能工具栏
+- **用户体验佳**：流式响应、智能工具栏、主题切换、字体控制
+- **可访问性强**：支持键盘导航和无障碍操作
 
 ### 功能亮点
-- **智能文本选择**：浮动工具栏提供便捷操作入口
+- **智能文本选择**：浮动工具栏提供便捷操作入口，支持智能定位和自动隐藏
 - **多样化问答**：支持多种预设和自定义问题类型
 - **实时反馈**：SSE流式传输提供即时响应
+- **个性化定制**：支持主题切换和字体大小调节
 - **历史管理**：完整的问答历史记录和管理
 
 ### 最佳实践建议
@@ -504,5 +671,7 @@ AI阅读助手项目展现了现代Web应用开发的最佳实践，通过以下
 2. **性能优化**：合理配置模型参数，避免过度消耗
 3. **数据备份**：定期备份数据库，防止数据丢失
 4. **安全防护**：启用HTTPS，定期更新依赖包
+5. **用户体验**：根据用户反馈持续优化主题和字体控制功能
+6. **可访问性**：确保所有功能都支持键盘操作和屏幕阅读器
 
-该项目为AI辅助阅读场景提供了完整的解决方案，具有良好的可维护性和扩展性，适合进一步的功能增强和定制开发。
+该项目为AI辅助阅读场景提供了完整的解决方案，具有良好的可维护性和扩展性，适合进一步的功能增强和定制开发。新的浮动工具栏系统、主题切换和字体大小控制功能显著提升了用户体验，为用户提供了更加个性化和舒适的阅读环境。

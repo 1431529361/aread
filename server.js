@@ -11,6 +11,9 @@ require('dotenv').config();
 
 const { initDB, getDB } = require('./database');
 const { authMiddleware, registerHandler, loginHandler, meHandler, addDefaultBooksForUser } = require('./auth');
+const { runAgentLoop } = require('./agent');
+const rag = require('./rag');
+const { runTask, listTasks } = require('./orchestrator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -915,6 +918,194 @@ async function callAI(apiKey, selectedText, question, bookName, providerConfig, 
     const data = await response.json();
     return { answer: data.choices[0].message.content, model };
 }
+
+// ==================== Agent Routes (Function Calling + RAG + Multi-Agent) ====================
+
+// 解析用户某 provider 的 API Key
+function resolveApiKey(userId, providerId) {
+    const storedKeysRows = db.prepare('SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?').all(userId);
+    const storedKeys = {};
+    for (const r of storedKeysRows) storedKeys[r.provider] = r.encrypted_key;
+    let apiKey = null;
+    if (storedKeys[providerId]) {
+        apiKey = decrypt(storedKeys[providerId]);
+    }
+    if (!apiKey) {
+        const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
+        apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
+        if (!apiKey && providerId.startsWith('custom')) apiKey = process.env.CUSTOM_API_KEY;
+    }
+    return apiKey;
+}
+
+// 读取书籍全文（仅 TXT 支持智能索引/工具）
+function getBookContent(userId, bookId) {
+    const row = db.prepare('SELECT * FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, userId);
+    if (!row) return null;
+    const filePath = path.join(BOOKS_DIR, userId, row.filename);
+    if (!fs.existsSync(filePath)) return null;
+    if (row.format.toLowerCase() !== 'txt') return { book: row, content: null, supported: false };
+    try {
+        const content = readTextFileWithEncoding(filePath);
+        return { book: row, content, supported: true };
+    } catch (e) {
+        return null;
+    }
+}
+
+// RAG 索引状态
+app.get('/api/books/:id/index-status', (req, res) => {
+    res.json(rag.getIndexStatus(req.user.id, req.params.id));
+});
+
+// 触发 RAG 索引
+app.post('/api/books/:id/index', async (req, res) => {
+    const bookId = req.params.id;
+    const { provider } = req.body;
+    const providerId = provider || 'zhipu';
+    const data = getBookContent(req.user.id, bookId);
+    if (!data) return res.status(404).json({ error: '书籍不存在或无法读取' });
+    if (!data.supported) return res.status(400).json({ error: '当前仅支持 TXT 格式的智能索引' });
+
+    const apiKey = resolveApiKey(req.user.id, providerId);
+    try {
+        const result = await rag.indexBook({
+            bookId, userId: req.user.id, content: data.content,
+            apiKey, providerId
+        });
+        res.json({ success: true, ...result });
+    } catch (e) {
+        res.status(500).json({ error: `索引失败: ${e.message}` });
+    }
+});
+
+// 删除 RAG 索引
+app.delete('/api/books/:id/index', (req, res) => {
+    rag.deleteIndex(req.user.id, req.params.id);
+    res.json({ success: true });
+});
+
+// Agent 流式问答（Function Calling + ReAct）
+app.post('/api/agent/stream', async (req, res) => {
+    const { text, question, bookName, provider, model: clientModel, bookId } = req.body;
+    if (!question) return res.status(400).json({ error: '请提供问题' });
+
+    const providerId = provider || 'zhipu';
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+    const apiKey = resolveApiKey(req.user.id, providerId);
+    if (!apiKey) {
+        return res.status(403).json({ error: `未配置${providerConfig.name}的API密钥`, needApiKey: true, provider: providerId });
+    }
+
+    // 获取书籍内容（供 Agent 工具使用）
+    let bookContent = text || '';
+    let ctxBookId = bookId || null;
+    let ctxBookName = bookName || '';
+    if (bookId) {
+        const data = getBookContent(req.user.id, bookId);
+        if (data && data.supported) {
+            bookContent = data.content;
+            ctxBookName = ctxBookName || data.book.title;
+        }
+    }
+
+    const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
+    const systemPrompt = `你是一个专业的阅读助手 Agent，具备工具调用能力，可以自主决定调用工具来查阅书籍内容。当前书籍：《${ctxBookName}》。
+
+可用工具：
+- searchInBook：在全书检索相关段落（RAG）
+- getChapterInfo：获取指定章节内容
+- summarizeSection：总结指定文本
+- translateText：翻译文本
+- lookupCharacter：查找人物出场信息
+
+工作原则：
+1. 若问题可基于选中文本直接回答，直接回答（不必调用工具）
+2. 若需要查阅书中其他部分，调用 searchInBook 或 getChapterInfo
+3. 调用工具后，结合工具返回结果组织最终答案
+4. 回答条理清晰，标注信息来源（选中文本/全书检索/章节内容）
+5. 避免冗余工具调用
+6. 当用户询问模型信息，如实告知当前模型：${model}`;
+
+    const userMessage = text
+        ? `选中的文本：\n"${text}"\n\n问题：${question}`
+        : `问题：${question}${ctxBookName ? `\n（关于《${ctxBookName}》）` : ''}`;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    try {
+        await runAgentLoop({
+            apiKey, providerConfig, model, providerId,
+            systemPrompt, userMessage,
+            context: { bookId: ctxBookId, userId: req.user.id, content: bookContent },
+            onEvent: (event) => {
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+            }
+        });
+        res.end();
+    } catch (error) {
+        console.error('Agent 流式错误:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: `Agent 服务失败: ${error.message}` });
+        } else {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            res.end();
+        }
+    }
+});
+
+// Multi-Agent 任务列表
+app.get('/api/agent/tasks', (req, res) => {
+    res.json({ tasks: listTasks() });
+});
+
+// Multi-Agent 任务执行（SSE 进度推送）
+app.post('/api/agent/task', async (req, res) => {
+    const { taskType, bookId, provider, model: clientModel } = req.body;
+    if (!taskType) return res.status(400).json({ error: '请提供 taskType' });
+    if (!bookId) return res.status(400).json({ error: '请提供 bookId' });
+
+    const providerId = provider || 'zhipu';
+    const providerConfig = getProviderConfig(providerId, req.user.id);
+    const apiKey = resolveApiKey(req.user.id, providerId);
+    if (!apiKey) {
+        return res.status(403).json({ error: `未配置${providerConfig.name}的API密钥`, needApiKey: true, provider: providerId });
+    }
+
+    const data = getBookContent(req.user.id, bookId);
+    if (!data || !data.supported) {
+        return res.status(400).json({ error: '书籍不存在或暂不支持该格式（仅支持 TXT）' });
+    }
+
+    const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    try {
+        const result = await runTask(taskType, {
+            bookId, userId: req.user.id, content: data.content,
+            bookName: data.book.title, apiKey, providerConfig, model, providerId
+        }, (event) => {
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+        });
+        res.write(`data: ${JSON.stringify({ type: 'result', final: result.final, outputs: result.outputs })}\n\n`);
+        res.end();
+    } catch (error) {
+        console.error('Multi-Agent 任务错误:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ error: `任务执行失败: ${error.message}` });
+        } else {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            res.end();
+        }
+    }
+});
 
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));

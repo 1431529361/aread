@@ -1255,6 +1255,125 @@ body {
 
 .modal-overlay.visible { display: flex; }
 
+/* ==================== Agent Mode ==================== */
+
+.agent-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0;
+    margin-bottom: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.agent-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.agent-mode-toggle input { display: none; }
+
+.toggle-slider {
+    width: 34px;
+    height: 18px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    position: relative;
+    transition: var(--transition);
+    border: 1px solid var(--border);
+}
+
+.toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: white;
+    border-radius: 50%;
+    transition: var(--transition);
+}
+
+.agent-mode-toggle input:checked + .toggle-slider { background: var(--primary); border-color: var(--primary); }
+.agent-mode-toggle input:checked + .toggle-slider::after { transform: translateX(16px); }
+
+.toggle-label { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+.agent-mode-hint { font-size: 0.7rem; color: var(--text-muted); }
+
+/* ==================== Agent Trace ==================== */
+
+.agent-trace {
+    max-height: 180px;
+    overflow-y: auto;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.74rem;
+    line-height: 1.5;
+}
+
+.trace-item {
+    padding: 0.3rem 0.4rem;
+    border-left: 2px solid var(--border);
+    margin-bottom: 0.3rem;
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+.trace-iter { color: var(--primary); font-weight: 600; margin-right: 0.2rem; }
+.trace-thought { border-left-color: #8b5cf6; }
+.trace-tool_call { border-left-color: #3b82f6; }
+.trace-tool_result { border-left-color: #10b981; }
+.trace-fallback { border-left-color: #f59e0b; }
+
+/* ==================== Agent Task Modal ==================== */
+
+.agent-task-modal { max-width: 560px; }
+
+.task-progress { margin-bottom: 0.8rem; }
+.task-progress-bar { height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
+.task-progress-fill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
+.task-progress-text { font-size: 0.74rem; color: var(--text-secondary); margin-top: 0.3rem; }
+
+.task-log {
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 0.6rem;
+    font-size: 0.77rem;
+    line-height: 1.6;
+    margin-bottom: 0.6rem;
+}
+
+.task-log > div { padding: 0.15rem 0; }
+.log-info { color: var(--text-secondary); }
+.log-node { color: #3b82f6; font-weight: 600; }
+.log-progress { color: var(--text-muted); }
+.log-success { color: #10b981; }
+.log-error { color: #ef4444; }
+
+.task-result {
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 0.8rem;
+    font-size: 0.82rem;
+    line-height: 1.7;
+}
+
+.task-result h2, .task-result h3, .task-result h4 { margin: 0.6rem 0 0.3rem; color: var(--primary); }
+.task-result h2 { font-size: 1rem; }
+.task-result h3 { font-size: 0.9rem; }
+.task-result h4 { font-size: 0.82rem; }
+.task-result strong { color: var(--text-primary); }
+
 .modal-content {
     background: var(--bg-primary);
     border-radius: var(--radius-lg);
