@@ -1,0 +1,135 @@
+{
+  "summary": {
+    "projectName": "ai-reading-assistant",
+    "locale": "zh-CN",
+    "modelId": "agent-work-loop-v4",
+    "reportContractVersion": 24,
+    "overview": "项目拥有结构清晰的代理引导文件（CLAUDE.md），但缺少任何自动化验证、交付审批和运行时固定机制。当前无可用会话证据，所有行为维度基于静态仓库检查。",
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Rules",
+        "Skills",
+        "Plugins"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0,
+          "paths": []
+        },
+        {
+          "surface": "Skills",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0,
+          "paths": []
+        },
+        {
+          "surface": "Plugins",
+          "scopes": [
+            "Global"
+          ],
+          "count": 3,
+          "paths": [
+            "better-loop",
+            "create-plugin",
+            "security-scan"
+          ]
+        }
+      ]
+    },
+    "suggestions": [],
+    "assignmentSummaries": [],
+    "dimensions": [
+      {
+        "id": "task-understanding",
+        "label": "任务理解",
+        "score": 55,
+        "summary": "CLAUDE.md 提供了架构、命令和 API 概览，但缺少规范文档、任务路由和显式风险区域声明。",
+        "findingRefs": []
+      },
+      {
+        "id": "controlled-execution",
+        "label": "可控执行",
+        "score": 52,
+        "summary": "基本启动路径可用（npm install/start），但无运行时版本固定、无 doctor 命令、无权限边界。",
+        "findingRefs": [
+          "runtime-not-pinned"
+        ]
+      },
+      {
+        "id": "change-validation",
+        "label": "改动验证",
+        "score": 30,
+        "summary": "项目明确声明无测试、无 linter、无构建步骤，任何变更均无自动化验证路径。",
+        "findingRefs": [
+          "no-automated-validation"
+        ]
+      },
+      {
+        "id": "reliable-delivery",
+        "label": "可靠交付",
+        "score": 32,
+        "summary": "无 CI、无 PR 审批流程、无部署管道，变更直接提交至工作分支，无回滚机制。",
+        "findingRefs": [
+          "no-delivery-acceptance-boundary"
+        ]
+      },
+      {
+        "id": "learning-capture",
+        "label": "经验沉淀",
+        "score": 35,
+        "summary": "无可观察的会话证据，无项目级 Skill 或复用机制，学习捕获尚无法评估。",
+        "findingRefs": []
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "no-automated-validation",
+      "title": "变更缺少任何自动化验证路径",
+      "severity": "High",
+      "reason": "项目无测试框架、无 linter、无类型检查、无 CI。CLAUDE.md 明确声明『没有构建步骤、没有 linter、没有测试框架』。7 个源文件的任何修改都无法被自动检查捕获，代理编辑后无法获得可操作的反馈信号。",
+      "expectedOutput": [
+        "添加最小 ESLint 配置和 npm run lint 脚本，使代理编辑后可获得即时反馈。"
+      ],
+      "expectedArtifact": "Lint 配置和脚本",
+      "aiFixPrompt": "/better-loop fix this issue\n\n为项目添加最小可运行的验证路径：\n1. 添加 ESLint 基础配置覆盖 server.js、auth.js、database.js 等核心文件\n2. 在 package.json 中添加 lint 脚本\n3. 在 CLAUDE.md 中记录验证命令\n\n## 验证\n\n- 运行 npm run lint 确认无阻塞性错误\n- 确认 CLAUDE.md 包含验证命令说明",
+      "dimensionRefs": [
+        "change-validation"
+      ]
+    },
+    {
+      "id": "no-delivery-acceptance-boundary",
+      "title": "交付无验收边界和回滚路径",
+      "severity": "Medium",
+      "reason": "项目无 CI 管道、无分支保护、无 PR 审批流程。Git 历史显示直接提交至主分支（含多条无描述提交如『1』『2』），当前有 8 个未提交的已修改文件。变更从编辑到生效无任何审查或验收门控，也无回滚或恢复机制。",
+      "expectedOutput": [
+        "在 CLAUDE.md 中记录提交规范、手动验收步骤和基本回滚路径。"
+      ],
+      "expectedArtifact": "交付规范文档",
+      "aiFixPrompt": "/better-loop fix this issue\n\n为项目建立最小交付验收路径：\n1. 在 CLAUDE.md 中添加提交规范（有意义的提交消息）\n2. 记录变更前的手动验证步骤（启动服务、检查核心 API）\n3. 记录 git revert 作为基本回滚路径\n\n## 验证\n\n- 确认 CLAUDE.md 包含提交规范和回滚说明\n- 确认手动验证步骤覆盖认证和 AI 问答核心路径",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ]
+    },
+    {
+      "id": "runtime-not-pinned",
+      "title": "Node.js 运行时版本未固定",
+      "severity": "Low",
+      "reason": "项目无 .nvmrc、无 packageManager 字段、无 engines 约束。不同环境可能使用不同 Node 版本运行项目，导致依赖行为差异（如 better-sqlite3 原生模块兼容性）。代理无法确定正确的运行时版本。",
+      "expectedOutput": [
+        "添加 .nvmrc 和 engines 字段，使代理和开发者能确定正确的 Node.js 版本。"
+      ],
+      "expectedArtifact": "运行时版本固定配置",
+      "aiFixPrompt": "/better-loop fix this issue\n\n固定项目运行时版本：\n1. 在 package.json 中添加 engines 字段声明 Node.js 最低版本\n2. 添加 .nvmrc 文件\n3. 在 CLAUDE.md 中注明运行时要求\n\n## 验证\n\n- 确认 package.json 包含 engines.node 字段\n- 确认 .nvmrc 存在且版本一致",
+      "dimensionRefs": [
+        "controlled-execution"
+      ]
+    }
+  ]
+}

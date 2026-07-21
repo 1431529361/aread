@@ -10,29 +10,64 @@ const { splitChapters } = require('./agent');
 
 // ==================== 通用 LLM 调用 ====================
 
-async function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5 } = {}) {
+async function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5, timeoutMs = 120000, retries = 2 } = {}) {
     const apiEndpoint = ctx.providerConfig.apiEndpoint;
     const model = ctx.model || ctx.providerConfig.defaultModel;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-    try {
-        const resp = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.apiKey}` },
-            body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                temperature,
-                max_tokens: maxTokens
-            }),
-            signal: controller.signal
-        });
-        if (!resp.ok) throw new Error(`LLM调用失败: ${resp.status}`);
-        const data = await resp.json();
-        return data.choices[0].message.content.trim();
-    } finally {
-        clearTimeout(timeout);
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const resp = await fetch(apiEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.apiKey}` },
+                body: JSON.stringify({
+                    model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature,
+                    max_tokens: maxTokens
+                }),
+                signal: controller.signal
+            });
+            if (!resp.ok) {
+                const err = new Error(`LLM调用失败: ${resp.status}`);
+                err.status = resp.status;
+                throw err;
+            }
+            const data = await resp.json();
+            return data.choices[0].message.content.trim();
+        } catch (e) {
+            lastErr = e;
+            // 4xx 客户端错误（模型不存在/请求非法，429 限流除外）重试无意义，直接抛出
+            const status = e.status || 0;
+            const isFatalClientError = status >= 400 && status < 500 && status !== 429;
+            if (isFatalClientError) break;
+            // 超时/限流/服务端错误：退避后重试
+            if (attempt < retries) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        } finally {
+            clearTimeout(timeout);
+        }
     }
+    throw lastErr;
+}
+
+// ==================== 并发控制 ====================
+
+/**
+ * 以受限并发度执行异步任务，避免一次性发出过多请求触发提供商限流/超时
+ */
+async function runWithConcurrency(items, limit, fn) {
+    const results = new Array(items.length);
+    let idx = 0;
+    const workerCount = Math.max(1, Math.min(limit, items.length));
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (idx < items.length) {
+            const i = idx++;
+            results[i] = await fn(items[i], i);
+        }
+    });
+    await Promise.all(workers);
+    return results;
 }
 
 // ==================== DAG 编排器 ====================
@@ -137,8 +172,9 @@ ${preview}
                     const targets = chapters.slice(0, MAX_SUMMARY_CHAPTERS);
                     onProgress({ stage: `并行摘要 ${targets.length} 章` });
 
-                    // 并行生成各章摘要
-                    const summaries = await Promise.all(targets.map(async (ch, i) => {
+                    // 受限并发生成各章摘要（每次最多 3 个请求，避免限流/超时）
+                    let doneCount = 0;
+                    const summaries = await runWithConcurrency(targets, 3, async (ch, i) => {
                         const prompt = `请用150字以内总结以下章节的核心内容，提炼关键情节与要点：
 
 章节：${ch.title}
@@ -146,12 +182,15 @@ ${preview}
 ${ch.text.substring(0, 2000)}`;
                         try {
                             const summary = await llm(ctx, prompt, { maxTokens: 400, temperature: 0.3 });
-                            onProgress({ stage: `已完成 ${i + 1}/${targets.length}`, done: i + 1, total: targets.length });
+                            doneCount++;
+                            onProgress({ stage: `已完成 ${doneCount}/${targets.length}`, done: doneCount, total: targets.length });
                             return { index: i + 1, title: ch.title, summary };
                         } catch (e) {
+                            doneCount++;
+                            onProgress({ stage: `已完成 ${doneCount}/${targets.length}`, done: doneCount, total: targets.length });
                             return { index: i + 1, title: ch.title, summary: '(摘要生成失败)', error: e.message };
                         }
-                    }));
+                    });
                     return { summaries, totalChapters: chapters.length, summarized: targets.length };
                 }
             },
@@ -211,7 +250,7 @@ ${critique}
 - 末尾加一段100字的个人感悟
 - 整体语言精炼、有见地`;
                     onProgress({ stage: '整合输出' });
-                    const note = await llm(ctx, prompt, { maxTokens: 2000, temperature: 0.6 });
+                    const note = await llm(ctx, prompt, { maxTokens: 2000, temperature: 0.6, timeoutMs: 180000 });
                     return { note };
                 }
             }
@@ -260,16 +299,16 @@ ${preview}
                     const characters = inputs.detect?.characters || [];
                     onProgress({ stage: `并行分析 ${characters.length} 个人物` });
 
-                    const analyses = await Promise.all(characters.map(async (char, i) => {
+                    const analyses = await runWithConcurrency(characters, 3, async (char, i) => {
                         const name = char.name;
                         // 在全文中查找该人物的上下文片段
                         const content = ctx.content || '';
                         const pos = content.indexOf(name);
                         const snippet = pos >= 0 ? content.substring(Math.max(0, pos - 100), pos + 600) : '';
 
-                        const prompt = `请基于以下文本片段，分析人物"${name}"的形象。
+                        const prompt = `请基于以下文本片段，分析人物“${name}”的形象。
 
-《${ctx.bookName}》中与"${name}"相关片段：
+《${ctx.bookName}》中与“${name}”相关片段：
 ${snippet}
 
 身份定位：${char.role || '未知'}
@@ -282,7 +321,7 @@ ${snippet}
                         } catch (e) {
                             return { name, role: char.role, analysis: '(分析失败)', error: e.message };
                         }
-                    }));
+                    });
                     return { analyses };
                 }
             },
@@ -306,7 +345,7 @@ ${analysisText}
 - 末尾总结人物关系网络（谁与谁有何关系、冲突线索）
 - 语言精炼有洞察力`;
                     onProgress({ stage: '整合关系图谱' });
-                    const report = await llm(ctx, prompt, { maxTokens: 1500, temperature: 0.5 });
+                    const report = await llm(ctx, prompt, { maxTokens: 1500, temperature: 0.5, timeoutMs: 180000 });
                     return { report };
                 }
             }

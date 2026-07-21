@@ -60,11 +60,10 @@
             <!-- History -->
             <div class="history-view" id="historyView">
                 <div class="history-header">
-                    <h2>问答历史</h2>
-                    <button class="clear-history-btn" id="clearHistoryBtn">清空历史</button>
+                    <h2>对话历史</h2>
                 </div>
                 <div class="history-list" id="historyList">
-                    <p class="empty-history">暂无历史记录</p>
+                    <p class="empty-history">暂无对话历史</p>
                 </div>
             </div>
 
@@ -192,8 +191,9 @@
                                 <input type="text" id="customProviderName" class="api-key-input" placeholder="如：OpenAI、DeepSeek">
                             </div>
                             <div class="form-group">
-                                <label for="customProviderEndpoint">API 地址 <span class="required">*</span></label>
-                                <input type="text" id="customProviderEndpoint" class="api-key-input" placeholder="https://api.example.com/v1/chat/completions">
+                                <label for="customProviderEndpoint">API 地址（Base URL）<span class="required">*</span></label>
+                                <input type="text" id="customProviderEndpoint" class="api-key-input" placeholder="如：https://dashscope.aliyuncs.com/compatible-mode/v1">
+                                <p class="form-hint">填写 OpenAI 兼容的 Base URL，系统会自动补全 /chat/completions</p>
                             </div>
                             <div class="form-group">
                                 <label for="customProviderModel">默认模型 <span class="required">*</span></label>
@@ -311,50 +311,65 @@
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1a7 7 0 0 1-7 7H8a7 7 0 0 1-7-7H0a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
                 </button>
 
-                <!-- AI Panel (collapsible, bottom sheet) -->
-                <div class="ai-panel-sheet" id="aiPanelSheet">
-                    <div class="ai-sheet-handle" id="aiSheetHandle">
-                        <div class="handle-bar"></div>
-                    </div>
-                    <div class="ai-sheet-header">
-                        <h3 class="ai-sheet-title">AI 助手</h3>
-                        <button class="ai-sheet-close" id="aiSheetClose">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <!-- AI Chat View (full screen) -->
+                <div class="ai-chat-view" id="aiChatView">
+                    <header class="chat-header">
+                        <button class="chat-back-btn" id="chatBackBtn" title="返回阅读">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
                         </button>
-                    </div>
-                    <div class="ai-sheet-content">
-                        <div class="selected-text-box" id="selectedTextBox" style="display:none">
-                            <div class="selected-text-label">选中的文本：</div>
-                            <div class="selected-text-content" id="selectedTextContent"></div>
+                        <div class="chat-header-title">
+                            <span class="chat-title-main">AI 助手</span>
+                            <span class="chat-title-sub" id="sessionInfo">上下文：0 tokens</span>
                         </div>
-                        <div class="agent-mode-row">
-                            <label class="agent-mode-toggle">
-                                <input type="checkbox" id="agentModeToggle">
-                                <span class="toggle-slider"></span>
-                                <span class="toggle-label">Agent 模式</span>
-                            </label>
-                            <span class="agent-mode-hint">启用工具调用与全书检索</span>
-                        </div>
-                        <div class="quick-actions">
-                            <button class="quick-action-btn" data-action="explain">解释说明</button>
-                            <button class="quick-action-btn" data-action="summarize">总结概括</button>
-                            <button class="quick-action-btn" data-action="translate">翻译成英文</button>
-                            <button class="quick-action-btn" data-action="expand">扩展阅读</button>
-                        </div>
-                        <div class="custom-question">
-                            <textarea class="question-input" id="questionInput" placeholder="输入您想问的问题..."></textarea>
-                            <button class="ask-btn" id="askBtn">
-                                <span class="ask-btn-text">提问</span>
-                                <span class="ask-btn-loading">思考中...</span>
+                        <div class="chat-header-actions">
+                            <button class="chat-icon-btn" id="newConversationBtn" title="开始新对话（当前对话将归档）">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                            </button>
+                            <button class="chat-icon-btn" id="compressBtn" title="压缩当前对话上下文">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                            </button>
+                            <button class="chat-icon-btn" id="memoryBtn" title="查看/管理 AI 记忆">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44A2.5 2.5 0 0 1 3.5 17.5v-1a2.5 2.5 0 0 1-1-4.9V11a2.5 2.5 0 0 1 1-4.9V6.5A2.5 2.5 0 0 1 5.96 4.06 2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44A2.5 2.5 0 0 0 20.5 17.5v-1a2.5 2.5 0 0 0 1-4.9V11a2.5 2.5 0 0 0-1-4.9V6.5A2.5 2.5 0 0 0 18.04 4.06 2.5 2.5 0 0 0 14.5 2z"/></svg>
                             </button>
                         </div>
-                        <div class="ai-response" id="aiResponse">
-                            <div class="response-header">
-                                <span class="response-label">AI回答：</span>
+                    </header>
+
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="chat-empty" id="chatEmpty">
+                            <div class="chat-empty-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                             </div>
-                            <div class="agent-trace" id="agentTrace" style="display:none"></div>
-                            <div class="response-content" id="responseContent">
-                                <p class="placeholder-text">选中文字后，点击快捷操作或输入问题</p>
+                            <p class="chat-empty-title">开始和 AI 对话</p>
+                            <p class="chat-empty-desc">选中原文或直接提问，AI 会结合本书内容回答你</p>
+                        </div>
+                    </div>
+
+                    <div class="chat-composer">
+                        <div class="composer-context" id="selectedTextBox" style="display:none">
+                            <span class="composer-context-icon">❝</span>
+                            <span class="composer-context-text" id="selectedTextContent"></span>
+                            <button class="composer-context-clear" id="clearSelectedTextBtn" title="移除引用">✕</button>
+                        </div>
+                        <div class="composer-quick" id="quickActions">
+                            <button class="quick-action-btn" data-action="explain">解释</button>
+                            <button class="quick-action-btn" data-action="summarize">总结</button>
+                            <button class="quick-action-btn" data-action="translate">翻译</button>
+                            <button class="quick-action-btn" data-action="expand">扩展</button>
+                        </div>
+                        <div class="composer-main">
+                            <label class="agent-mode-toggle" title="启用工具调用与全书检索">
+                                <input type="checkbox" id="agentModeToggle">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">Agent</span>
+                            </label>
+                            <div class="composer-input-wrap">
+                                <textarea class="question-input" id="questionInput" rows="1" placeholder="输入问题，Enter 发送 · Shift+Enter 换行"></textarea>
+                                <button class="ask-btn" id="askBtn" title="发送">
+                                    <span class="ask-btn-text">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                                    </span>
+                                    <span class="ask-btn-loading"><span class="btn-spinner"></span></span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -424,6 +439,7 @@
                     </div>
                     <div class="task-log" id="taskLog"></div>
                     <div class="task-result" id="taskResult" style="display:none"></div>
+                    <div class="task-actions" id="taskActionBar" style="display:none"></div>
                     <div class="modal-actions">
                         <button class="btn btn-secondary" id="agentTaskCancelBtn">关闭</button>
                     </div>
@@ -467,6 +483,22 @@
 
         <!-- Toast -->
         <div class="toast" id="toast"></div>
+
+        <!-- ========== Memory Modal ========== -->
+        <div class="memory-modal" id="memoryModal" style="display:none">
+            <div class="memory-modal-mask" id="memoryModalMask"></div>
+            <div class="memory-modal-card">
+                <div class="memory-modal-header">
+                    <h3>🧠 AI 记忆</h3>
+                    <button class="memory-modal-close" id="memoryModalClose">✕</button>
+                </div>
+                <p class="memory-modal-desc">AI 从你的对话中记住的偏好与信息，会在后续对话中被参考。你可以随时删除。</p>
+                <div class="memory-list" id="memoryList"></div>
+                <div class="memory-modal-footer">
+                    <button class="session-btn" id="memoryClearAllBtn">清空全部记忆</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>
