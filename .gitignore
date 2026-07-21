@@ -16,6 +16,8 @@ node_modules/
 .users.json
 .books_meta.json
 data.db
+data.db-shm
+data.db-wal
 
 # 鐢ㄦ埛涓婁紶鐨勪功绫?
 books/
