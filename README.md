@@ -1,6 +1,6 @@
 # AI 阅读助手 (AI Reading Assistant)
 
-一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、书架管理、自定义 AI 提供商等功能。
+一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、会话管理、Agent 智能体、书架管理、自定义 AI 提供商等功能。
 
 ## 特性
 
@@ -14,28 +14,44 @@
   - 三种主题模式：明亮 / 暗黑 / 护眼
   - 选中文本浮动工具栏
 
+### 💬 会话管理（按书隔离）
+
+- **按书分会话**：每本书独立的对话上下文，切书自动切换会话
+- **上下文管理**：
+  - 自动压缩：上下文接近模型窗口 70% 时自动滚动摘要压缩
+  - 手动压缩：对话页一键压缩，显示节省的 token 数
+  - 实时监控：顶部显示当前上下文 token 占用量及百分比（如 `1.2K / 128K（1%）`）
+- **用户记忆**：AI 自动从对话中抽取用户偏好/事实/兴趣，跨会话注入，让 AI "记得"你
+- **会话持久化**：对话历史持久化到 SQLite，支持查看、归档、删除
+- **历史导航**：底部"历史"标签展示会话列表，点击可回溯到对应书籍的对话现场
+
 ### 🤖 AI 智能问答
 
+- **全屏对话页**：替代底部半屏面板，主流 Agent 产品风格的消息气泡界面
 - **快捷操作**：选中文本后弹出工具栏，支持解释说明、总结概括、翻译、扩展阅读
-- **自定义问题**：输入自定义问题，AI 结合书籍上下文提供精准回答
+- **自由提问**：无需选中文本也可直接提问，AI 结合书籍上下文回答
 - **流式输出**：SSE 流式传输，打字机效果，提升阅读体验
 - **模型显示**：回答中实时显示当前使用的 AI 提供商和模型信息
-- **对话历史**：自动保存最近 50 条问答记录，随时回顾
+- **引用原文**：用户消息气泡上方显示引用的原文片段
 
 ### 🧠 Agent 智能体
 
-- **Function Calling 工具 Agent**：开启"Agent 模式"后，AI 自主决定调用工具查阅全书内容，而非仅依赖选中文本
-  - 内置 5 个工具：`searchInBook`（全书检索）、`getChapterInfo`（章节内容）、`summarizeSection`（摘要）、`translateText`（翻译）、`lookupCharacter`（人物查找）
+- **Function Calling 工具 Agent**：开启"Agent 模式"后，AI 自主决定调用工具查阅全书内容
+  - 内置 3 个检索类工具：`searchInBook`（全书检索）、`getChapterInfo`（章节内容）、`lookupCharacter`（人物查找）
+  - 翻译/总结等任务由模型直接完成，不注册为工具（避免冗余 LLM 往返）
   - ReAct 风格多轮工具调用循环（思考→调用工具→观察结果→再推理）
-  - 实时展示 Agent 思考链与工具调用 trace
+  - 实时展示 Agent 思考链与工具调用 trace（内联折叠区，失败显示 ❌ 红色）
 - **RAG 检索增强**：为书籍建立智能索引，实现"全书级"问答
   - 章节边界 + 滑动窗口分块
   - BM25 关键词检索（默认，纯 JS 无依赖）+ 可选 Embedding 向量召回
   - 向量索引持久化，支持跨会话复用
+  - 已索引书籍再次点击显示状态，提供重建/删除选项
 - **Multi-Agent 任务编排**：复杂阅读任务自动拆解为子 Agent 并行执行
   - 读书笔记生成：大纲 → 逐章并行摘要 → 批判性点评 → 整合输出
   - 人物关系分析：人物检测 → 并行人物分析 → 关系图谱整合
   - DAG 拓扑排序并行调度，节点失败自动降级
+  - **结果持久化与复用**：生成后自动保存，再次点击直接展示历史结果，支持导出 Markdown / 查看阅读 / 重新生成
+  - LLM 调用自动重试（超时/限流退避重试，4xx 客户端错误不重试）
 - **安全防护**：最大 8 轮工具调用 + 单工具 5 次熔断，防止死循环；模型不支持 Function Calling 时自动降级为普通问答
 
 ### 📚 书架管理
@@ -44,6 +60,7 @@
 - **上传进度**：实时显示上传进度条
 - **书籍操作**：在线阅读（TXT）、下载、删除
 - **AI 智能任务**（TXT）：一键建立 RAG 索引、生成读书笔记、人物关系分析
+- **任务结果复用**：已生成的结果自动缓存，再次点击直接展示，支持导出/重生成
 - **数据隔离**：每个用户的书籍、书架、阅读进度完全独立
 
 ### 👤 用户系统
@@ -51,22 +68,24 @@
 - **注册登录**：支持用户名+密码注册登录，用户名支持中文
 - **JWT 认证**：登录后自动保持登录状态（7天），支持"记住我"（30天）
 - **密码安全**：bcrypt 加密存储，不保存明文密码
-- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、问答历史完全独立
-- **历史同步**：AI 问答历史存储在服务器端，换设备也能查看
+- **数据隔离**：每个用户的 API 密钥、自定义提供商、书架、会话、记忆完全独立
+- **会话同步**：AI 对话历史存储在服务器端，换设备也能查看
 
 ### 🔧 自定义 AI 提供商
 
 - **灵活添加**：支持添加任意 OpenAI 兼容 API
+- **Base URL 支持**：填写 Base URL（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`），系统自动补全 `/chat/completions`
 - **模型管理**：可配置默认模型和可选模型列表
 - **一键切换**：在已添加的提供商之间快速切换
 - **独立存储**：每个提供商的 API 密钥独立加密存储
 
 ### 🎨 现代化 UI 设计
 
+- **全屏对话页**：主流 Agent 产品风格，消息气泡 + 内联 trace 折叠区
 - **卡片式布局**：圆角卡片、渐变背景、阴影层次
-- **流畅动画**：按钮悬浮效果、面板滑入、淡入淡出
+- **流畅动画**：按钮悬浮效果、面板滑入、消息淡入
 - **统一滚动条**：自定义美化滚动条样式
-- **响应式设计**：适配不同屏幕尺寸
+- **响应式设计**：适配不同屏幕尺寸，移动端安全区适配
 
 ## 技术栈
 
@@ -74,7 +93,7 @@
 |------|------|
 | 后端 | Express.js 4.18.2 |
 | 前端 | 原生 JavaScript (ES6+) |
-| 数据库 | SQLite (sql.js - 纯 JS 实现，无需 C++ 编译) |
+| 数据库 | SQLite (better-sqlite3 - 同步 API，真增量写入) |
 | 用户认证 | JWT (jsonwebtoken) |
 | 密码加密 | bcryptjs |
 | 文件上传 | Multer |
@@ -82,9 +101,11 @@
 | 密钥加密 | crypto (AES-256-CBC) |
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
+| Token 估算 | gpt-tokenizer (OpenAI 兼容 BPE) |
 | Agent 引擎 | Function Calling + ReAct 循环（[agent.js](agent.js)） |
 | RAG 检索 | BM25 + 可选 Embedding 向量召回（[rag.js](rag.js)） |
 | 多 Agent 编排 | DAG 拓扑排序并行调度（[orchestrator.js](orchestrator.js)） |
+| 会话管理 | 按书隔离 + 滚动摘要压缩 + 长期记忆（[conversation.js](conversation.js)） |
 
 ## 快速开始
 
@@ -152,9 +173,9 @@ PORT=3000
 
 1. 在设置页面选择"➕ 自定义"标签
 2. 填写配置信息：
-   - **显示名称**：如 OpenAI、DeepSeek、Moonshot
-   - **API 地址**：完整的聊天补全 API 地址
-   - **默认模型**：如 `gpt-4`、`deepseek-chat`
+   - **显示名称**：如 OpenAI、DeepSeek、Moonshot、百炼
+   - **API 地址（Base URL）**：OpenAI 兼容的 Base URL，如 `https://dashscope.aliyuncs.com/compatible-mode/v1`（系统自动补全 `/chat/completions`）
+   - **默认模型**：如 `gpt-4`、`deepseek-chat`、`qwen-plus`
    - **可选模型列表**（选填）：JSON 格式
    - **API 密钥**：提供商的 API Key（也可通过环境变量 `CUSTOM_API_KEY` 配置）
 3. 点击"添加提供商"保存
@@ -207,9 +228,9 @@ PORT=3000
 |------|------|----------|
 | `searchInBook` | 全书 RAG 检索相关段落 | 问题超出选中文本范围 |
 | `getChapterInfo` | 获取指定章节内容 | 需查阅特定章节 |
-| `summarizeSection` | 总结指定文本 | 用户想快速了解大段内容 |
-| `translateText` | 翻译文本 | 跨语言理解需求 |
 | `lookupCharacter` | 查找人物出场上下文 | 人物形象/关系分析 |
+
+> **设计原则**：翻译、总结等模型原生能力不注册为工具，避免多余 LLM 往返与超时风险。
 
 ## 文件编码支持
 
@@ -237,7 +258,26 @@ PORT=3000
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/ask` | 非流式 AI 问答 |
-| POST | `/api/ask-stream` | 流式 AI 问答（SSE） |
+| POST | `/api/ask-stream` | 流式 AI 问答（SSE），`question` 必填，`text` 可选 |
+
+### 会话管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/conversations` | 列出会话（可按 `bookId` 过滤） |
+| GET | `/api/conversations/active` | 获取/创建某本书的 active 会话 |
+| POST | `/api/conversations` | 新建对话（归档该书旧的 active） |
+| GET | `/api/conversations/:id/messages` | 获取会话消息（默认仅工作窗口内） |
+| POST | `/api/conversations/:id/compress` | 手动压缩上下文 |
+| DELETE | `/api/conversations/:id` | 删除会话 |
+
+### 用户记忆
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/memories` | 获取用户记忆列表 |
+| DELETE | `/api/memories/:id` | 删除单条记忆 |
+| DELETE | `/api/memories` | 清空所有记忆 |
 
 ### Agent 智能体
 
@@ -246,18 +286,23 @@ PORT=3000
 | POST | `/api/agent/stream` | Function Calling Agent 流式问答（SSE，推送思考链/工具调用/最终答案） |
 | GET | `/api/agent/tasks` | 获取可用的 Multi-Agent 任务列表 |
 | POST | `/api/agent/task` | 执行 Multi-Agent 任务（SSE，推送节点进度与最终结果） |
+| GET | `/api/agent/task/result` | 查询已保存的任务结果（`bookId` + `taskType`） |
+| DELETE | `/api/agent/task/result` | 删除已保存的任务结果 |
 
 **Agent 流式事件类型**（`/api/agent/stream` 返回的 SSE data）：
 
 | 事件 type | 含义 |
 |-----------|------|
+| `session` | 会话信息（conversationId、tokens、limit） |
 | `start` | Agent 启动，返回模型/提供商信息 |
 | `thought` | Agent 中间思考内容 |
 | `tool_call` | 发起工具调用（含工具名、参数、轮次） |
-| `tool_result` | 工具执行结果（含耗时） |
+| `tool_result` | 工具执行结果（含耗时，失败时 result.error 有值） |
 | `fallback` | 模型不支持 Function Calling，降级为普通问答 |
 | `final_start` | 进入最终答案流式输出 |
 | `chunk` | 最终答案文本片段 |
+| `compressed` | 上下文已自动压缩（含 before/after/saved/tokens/limit） |
+| `session_update` | 会话 token 统计更新（含 tokens/limit） |
 | `end` | Agent 结束 |
 
 **Multi-Agent 任务类型**（`/api/agent/task` 的 `taskType`）：
@@ -304,11 +349,12 @@ PORT=3000
 ```
 trae02airead/
 ├── server.js              # Express 后端主服务
-├── database.js            # SQLite 数据库封装 (sql.js)
+├── database.js            # SQLite 数据库封装 (better-sqlite3)
 ├── auth.js                # 用户认证中间件
 ├── agent.js               # Function Calling Agent 引擎（ReAct 循环 + 工具调用）
 ├── rag.js                 # RAG 检索增强（分块 + BM25 + 可选 Embedding）
 ├── orchestrator.js        # Multi-Agent DAG 编排引擎
+├── conversation.js        # 会话管理（按书隔离 + 压缩 + 记忆）
 ├── package.json           # 项目依赖配置
 ├── .env                   # 环境变量配置
 ├── .gitignore             # Git 忽略配置
