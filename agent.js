@@ -1,8 +1,9 @@
 /**
  * Function Calling Agent 引擎
- * - 注册 5+ 工具（searchInBook / getChapterInfo / summarizeSection / translateText / lookupCharacter）
+ * - 注册 3 个信息检索类工具（searchInBook / getChapterInfo / lookupCharacter）
+ * - 翻译/总结等模型原生能力不注册为工具，避免多余 LLM 往返与超时风险
  * - ReAct 风格 tool-call 循环：非流式工具决策 + 最终流式输出
- * - 防死循环：最大轮次 + token 预算 + 单工具调用次数限制
+ * - 防死循环：最大轮次 + 单工具调用次数限制
  * - 全链路 trace 事件输出（thinking / tool_call / tool_result / chunk / end）
  * - 工具不可用时 graceful 降级为纯 LLM 流式回答
  */
@@ -41,35 +42,6 @@ const AGENT_TOOLS = [
                     chapterTitle: { type: 'string', description: '章节标题关键词' },
                     chapterIndex: { type: 'integer', description: '章节序号（从1开始）' }
                 }
-            }
-        }
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'summarizeSection',
-            description: '对指定的文本段落生成精炼摘要。当用户想快速了解大段内容主旨时调用。',
-            parameters: {
-                type: 'object',
-                properties: {
-                    sectionText: { type: 'string', description: '需要总结的文本（不超过2000字）' }
-                },
-                required: ['sectionText']
-            }
-        }
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'translateText',
-            description: '将指定文本翻译为目标语言。',
-            parameters: {
-                type: 'object',
-                properties: {
-                    text: { type: 'string', description: '待翻译文本' },
-                    targetLang: { type: 'string', description: '目标语言，如英文、日文、法文' }
-                },
-                required: ['text', 'targetLang']
             }
         }
     },
@@ -164,19 +136,6 @@ async function executeTool(name, args, ctx) {
                 length: target.text.length
             };
         }
-        case 'summarizeSection': {
-            const text = args.sectionText || '';
-            const summary = await llmComplete(ctx, 'summarize',
-                `请用中文对以下文本生成150字以内的精炼摘要，提炼核心要点：\n\n${text}`);
-            return { summary };
-        }
-        case 'translateText': {
-            const text = args.text || '';
-            const lang = args.targetLang || '英文';
-            const translation = await llmComplete(ctx, 'translate',
-                `请将以下文本翻译成${lang}，只输出译文，不要附加解释：\n\n${text}`);
-            return { translation, targetLang: lang };
-        }
         case 'lookupCharacter': {
             const charName = args.name || '';
             const content = ctx.content || '';
@@ -212,7 +171,7 @@ async function llmComplete(ctx, task, prompt) {
     const apiEndpoint = ctx.providerConfig.apiEndpoint;
     const model = ctx.model || ctx.providerConfig.defaultModel;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), 60000);
     try {
         const resp = await fetch(apiEndpoint, {
             method: 'POST',
@@ -336,6 +295,8 @@ function safeParseArgs(argsStr) {
  * @param {Object} opts
  *   - apiKey, providerConfig, model, providerId
  *   - systemPrompt, userMessage
+ *   - messages: 可选，预组装好的完整 messages 数组（含 system + 历史 + 当前 user）；
+ *               提供时优先使用，用于携带会话历史上下文
  *   - context: { bookId, userId, content }
  *   - onEvent: (event) => void  SSE 事件回调
  * @returns {Object} { content, iterations, trace }
@@ -344,10 +305,13 @@ async function runAgentLoop(opts) {
     const { apiKey, providerConfig, model, providerId, systemPrompt, userMessage, context, onEvent } = opts;
     const ctx = { apiKey, providerConfig, model, providerId, ...context };
 
-    const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
-    ];
+    // 优先使用调用方预组装的 messages（携带会话历史）；否则回退为 [system, user]
+    const messages = Array.isArray(opts.messages) && opts.messages.length > 0
+        ? [...opts.messages]
+        : [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+        ];
 
     const trace = [];
     const toolCallCounts = {}; // 防止单工具死循环
