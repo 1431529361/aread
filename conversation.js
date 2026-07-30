@@ -14,6 +14,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('./database');
 const { encode } = require('gpt-tokenizer');
 const rag = require('./rag');
+const llmClient = require('./llm-client');
 
 // ==================== 常量配置 ====================
 
@@ -55,32 +56,9 @@ function getModelContextLimit(model) {
 
 // ==================== 通用非流式 LLM 调用（压缩/记忆抽取用） ====================
 
-/**
- * @param {Object} ctx { apiKey, providerConfig, model }
- */
-async function llmComplete(ctx, prompt, { maxTokens = 800, temperature = 0.3 } = {}) {
-    const apiEndpoint = ctx.providerConfig.apiEndpoint;
-    const model = ctx.model || ctx.providerConfig.defaultModel;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 40000);
-    try {
-        const resp = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.apiKey}` },
-            body: JSON.stringify({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                temperature,
-                max_tokens: maxTokens
-            }),
-            signal: controller.signal
-        });
-        if (!resp.ok) throw new Error(`LLM调用失败: ${resp.status}`);
-        const data = await resp.json();
-        return data.choices[0].message.content.trim();
-    } finally {
-        clearTimeout(timeout);
-    }
+// 统一走 llm-client，保留本模块既有的 40s 超时
+function llmComplete(ctx, prompt, { maxTokens = 800, temperature = 0.3 } = {}) {
+    return llmClient.complete(ctx, prompt, { maxTokens, temperature, timeoutMs: 40000 });
 }
 
 // ==================== 会话 CRUD ====================

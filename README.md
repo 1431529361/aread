@@ -1,6 +1,6 @@
 # AI 阅读助手 (AI Reading Assistant)
 
-一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、会话管理、Agent 智能体、书架管理、自定义 AI 提供商等功能。
+一个现代化的智能阅读应用，集成多 AI 服务提供商，帮助用户高效阅读和理解书籍内容。支持在线阅读、AI 智能问答、会话管理、Agent 智能体（工具自注册）、RAG 混合检索（sqlite-vec 向量 + BM25）、书架管理、自定义 AI 提供商等功能。
 
 ## 特性
 
@@ -37,15 +37,17 @@
 ### 🧠 Agent 智能体
 
 - **Function Calling 工具 Agent**：开启"Agent 模式"后，AI 自主决定调用工具查阅全书内容
+  - **工具自注册架构**：工具放在 `tools/` 目录，每个工具一个自包含文件（schema + 实现同处一地），启动时自动扫描注册，新增工具零侵入
   - 内置 3 个检索类工具：`searchInBook`（全书检索）、`getChapterInfo`（章节内容）、`lookupCharacter`（人物查找）
   - 翻译/总结等任务由模型直接完成，不注册为工具（避免冗余 LLM 往返）
   - ReAct 风格多轮工具调用循环（思考→调用工具→观察结果→再推理）
-  - 实时展示 Agent 思考链与工具调用 trace（内联折叠区，失败显示 ❌ 红色）
+  - 实时展示 Agent 思考链与工具调用 trace（内联折叠区，检索结果多行展示命中条数与章节，失败显示 ❌ 红色）
 - **RAG 检索增强**：为书籍建立智能索引，实现"全书级"问答
-  - 章节边界 + 滑动窗口分块
-  - BM25 关键词检索（默认，纯 JS 无依赖）+ 可选 Embedding 向量召回
-  - 向量索引持久化，支持跨会话复用
-  - 已索引书籍再次点击显示状态，提供重建/删除选项
+  - 章节边界 + 滑动窗口分块，分块与向量统一入库 `data.db`（sqlite-vec 扩展，1024 维）
+  - **混合检索**：向量 KNN + BM25 关键词双路召回 → RRF 融合排序，默认返回 Top-5
+  - **多 Embedding 提供商**：阿里云（百炼/MaaS 专属端点，用户可配）、智谱 `embedding-3`、硅基流动 `bge-large-zh`，支持 auto 自动选择
+  - 未配置向量化时自动降级纯 BM25，任一路检索失败不影响另一路
+  - 已索引书籍显示模式徽标（`向量+BM25` / `仅BM25`），提供重建/删除选项
 - **Multi-Agent 任务编排**：复杂阅读任务自动拆解为子 Agent 并行执行
   - 读书笔记生成：大纲 → 逐章并行摘要 → 批判性点评 → 整合输出
   - 人物关系分析：人物检测 → 并行人物分析 → 关系图谱整合
@@ -102,8 +104,11 @@
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
 | Token 估算 | gpt-tokenizer (OpenAI 兼容 BPE) |
-| Agent 引擎 | Function Calling + ReAct 循环（[agent.js](agent.js)） |
-| RAG 检索 | BM25 + 可选 Embedding 向量召回（[rag.js](rag.js)） |
+| 向量存储 | sqlite-vec（SQLite 嵌入式向量扩展，vec0 虚拟表） |
+| LLM 调用层 | 统一 Client：非流式/流式/工具调用 + 超时重试 + SSE 解析（[llm-client.js](llm-client.js)） |
+| Agent 引擎 | Function Calling + ReAct 循环（[agent.js](agent.js)）+ 工具自注册（[tools/](tools/index.js)） |
+| RAG 检索 | 向量 KNN + BM25 双路召回 → RRF 融合（[rag.js](rag.js)） |
+| 向量化 | 多 Embedding 提供商解析与调用（[embedding.js](embedding.js)） |
 | 多 Agent 编排 | DAG 拓扑排序并行调度（[orchestrator.js](orchestrator.js)） |
 | 会话管理 | 按书隔离 + 滚动摘要压缩 + 长期记忆（[conversation.js](conversation.js)） |
 
@@ -156,6 +161,11 @@ ZHIPU_API_KEY=your_zhipu_key
 SILICONFLOW_API_KEY=your_siliconflow_key
 CUSTOM_API_KEY=your_custom_key
 
+# RAG 向量化兜底配置（可选，也可在前端"智能索引（RAG）"设置中按用户配置）
+EMBED_BASE_URL=          # OpenAI 兼容 Base URL，系统自动补全 /embeddings
+EMBED_MODEL_NAME=        # Embedding 模型名（需 1024 维输出，如 text-embedding-v4）
+EMBED_API_KEY=           # 阿里云 API Key
+
 # 服务端口（默认 3000）
 PORT=3000
 ```
@@ -201,17 +211,29 @@ PORT=3000
 - trace 区实时展示思考链、工具调用参数与返回结果
 - 若问题可直接基于选中文本回答，Agent 不会调用工具，直接输出答案
 
-> **模型要求**：需所配置模型支持 Function Calling（如 GLM-4 系列、DeepSeek 等）。不支持时自动降级为普通流式问答，不影响使用。
+> **模型要求**：需所配置模型支持 Function Calling（如 GLM-4 系列、DeepSeek、Qwen 等）。模型不支持或工具决策超时时，自动降级为普通流式问答，不影响使用。
 
-### 2. RAG 智能索引
+### 2. RAG 智能索引（混合检索）
 
-在书架的 TXT 书籍卡片上点击 **"AI索引"** 按钮：
+**配置向量化（可选）**：在设置页的 **"智能索引（RAG）"** 卡片中选择向量化提供商：
 
-- 系统按章节边界 + 滑动窗口将全书分块
-- 默认使用 BM25 关键词检索（纯 JS，无外部依赖）
-- 若提供商支持 Embedding（智谱 / 硅基流动），自动升级为向量检索，召回更精准
-- 索引持久化到 `rag_index/<userId>/<bookId>.json`，跨会话可复用
+| 提供商 | 模型 | 配置方式 |
+|--------|------|----------|
+| 阿里云（百炼 / MaaS） | 用户自填（需 1024 维，如 `text-embedding-v4`） | 填 Base URL + 模型名 + 独立 API Key |
+| 智谱 AI | `embedding-3`（1024 维） | 复用已配置的智谱对话 Key |
+| 硅基流动 | `BAAI/bge-large-zh-v1.5`（原生 1024 维） | 复用已配置的硅基流动对话 Key |
+
+默认 `auto` 模式按“阿里云 → 智谱 → 硅基流动”顺序自动选用已配置的提供商；也可选“关闭向量化”仅用 BM25。
+
+**建立索引**：在书架的 TXT 书籍卡片上点击 **"AI索引"** 按钮：
+
+- 系统按章节边界 + 滑动窗口将全书分块，分块写入 `rag_chunks` 表
+- 已配置向量化时，分批调用 Embedding API 将向量写入 sqlite-vec 虚拟表 `rag_vec`（模式 `向量+BM25`）
+- 未配置向量化时自动降级为纯 BM25 模式，不阻塞建索引
+- 检索时向量 KNN 与 BM25 双路各取 Top-10，RRF（Reciprocal Rank Fusion）融合后返回 Top-5
 - 建立索引后，Agent 模式中的 `searchInBook` 工具会优先使用该索引
+
+> 查询时使用建库时记录的同一 Embedding 模型（存于 `rag_index_meta`）；若该提供商 Key 已删除，检索自动降级 BM25 不报错。
 
 ### 3. Multi-Agent 任务
 
@@ -226,11 +248,34 @@ PORT=3000
 
 | 工具 | 功能 | 触发场景 |
 |------|------|----------|
-| `searchInBook` | 全书 RAG 检索相关段落 | 问题超出选中文本范围 |
+| `searchInBook` | 全书 RAG 混合检索相关段落（Top-5） | 问题超出选中文本范围 |
 | `getChapterInfo` | 获取指定章节内容 | 需查阅特定章节 |
 | `lookupCharacter` | 查找人物出场上下文 | 人物形象/关系分析 |
 
 > **设计原则**：翻译、总结等模型原生能力不注册为工具，避免多余 LLM 往返与超时风险。
+
+### 新增自定义工具
+
+工具采用自注册机制，在 `tools/` 目录新建一个文件即可，无需修改 `agent.js`：
+
+```js
+// tools/my-tool.js
+module.exports = {
+    name: 'myTool',
+    description: '工具功能描述（模型据此决定何时调用）',
+    parameters: {
+        type: 'object',
+        properties: { keyword: { type: 'string', description: '参数说明' } },
+        required: ['keyword']
+    },
+    async execute(args, ctx) {
+        // ctx: { userId, bookId, bookName, content, selectedText }
+        return { result: '...' };
+    }
+};
+```
+
+启动时 `tools/index.js` 自动扫描注册，装载期校验必备字段、重名报错。
 
 ## 文件编码支持
 
@@ -298,7 +343,7 @@ PORT=3000
 | `thought` | Agent 中间思考内容 |
 | `tool_call` | 发起工具调用（含工具名、参数、轮次） |
 | `tool_result` | 工具执行结果（含耗时，失败时 result.error 有值） |
-| `fallback` | 模型不支持 Function Calling，降级为普通问答 |
+| `fallback` | 降级为普通问答（模型不支持 Function Calling 或工具决策超时） |
 | `final_start` | 进入最终答案流式输出 |
 | `chunk` | 最终答案文本片段 |
 | `compressed` | 上下文已自动压缩（含 before/after/saved/tokens/limit） |
@@ -330,6 +375,14 @@ PORT=3000
 | PUT | `/api/providers/:id` | 更新自定义提供商 |
 | DELETE | `/api/providers/:id` | 删除自定义提供商 |
 
+### RAG 向量化设置
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/embedding-settings` | 获取当前向量化提供商选择及各提供商 Key 配置状态 |
+| PUT | `/api/embedding-settings` | 保存向量化设置（provider + 阿里云 Base URL/模型/Key，保存时实调接口校验） |
+| DELETE | `/api/embedding-settings/aliyun-key` | 删除阿里云 Embedding 密钥 |
+
 ### 书籍管理
 
 | 方法 | 路径 | 说明 |
@@ -340,8 +393,8 @@ PORT=3000
 | GET | `/api/books/:bookId/download` | 下载书籍 |
 | DELETE | `/api/books/:bookId` | 删除书籍 |
 | PUT | `/api/books/:bookId/progress` | 保存阅读进度 |
-| POST | `/api/books/:bookId/index` | 建立 RAG 智能索引（仅 TXT） |
-| GET | `/api/books/:bookId/index-status` | 查询 RAG 索引状态 |
+| POST | `/api/books/:bookId/index` | 建立 RAG 智能索引（仅 TXT，分块+向量入库） |
+| GET | `/api/books/:bookId/index-status` | 查询 RAG 索引状态（含模式/分块数/建库模型） |
 | DELETE | `/api/books/:bookId/index` | 删除 RAG 索引 |
 
 ## 项目结构
@@ -349,10 +402,18 @@ PORT=3000
 ```
 trae02airead/
 ├── server.js              # Express 后端主服务
-├── database.js            # SQLite 数据库封装 (better-sqlite3)
+├── database.js            # SQLite 数据库封装 (better-sqlite3 + sqlite-vec 扩展)
 ├── auth.js                # 用户认证中间件
-├── agent.js               # Function Calling Agent 引擎（ReAct 循环 + 工具调用）
-├── rag.js                 # RAG 检索增强（分块 + BM25 + 可选 Embedding）
+├── llm-client.js          # 统一 LLM 调用层（chat/complete/stream + 超时重试 + SSE 解析）
+├── agent.js               # Function Calling Agent 引擎（ReAct 循环）
+├── tools/                 # Agent 工具目录（自动扫描注册）
+│   ├── index.js           # 工具注册表
+│   ├── search-in-book.js  # 全书检索工具
+│   ├── get-chapter-info.js# 章节定位工具
+│   └── lookup-character.js# 人物查找工具
+├── rag.js                 # RAG 检索增强（分块入库 + 向量/BM25 双路召回 + RRF 融合）
+├── embedding.js           # Embedding 提供商解析与调用（阿里云/智谱/硅基流动）
+├── text-utils.js          # 文本处理工具（章节切分/截断）
 ├── orchestrator.js        # Multi-Agent DAG 编排引擎
 ├── conversation.js        # 会话管理（按书隔离 + 压缩 + 记忆）
 ├── package.json           # 项目依赖配置
@@ -368,24 +429,22 @@ trae02airead/
 ├── books/                 # 书籍文件存储（运行时）
 │   └── {userId}/
 │
-├── rag_index/             # RAG 向量索引存储（运行时）
-│   └── {userId}/{bookId}.json
-│
-├── data.db                # SQLite 数据库文件（运行时生成）
+├── data.db                # SQLite 数据库文件（含 RAG 分块/向量/元信息表，运行时生成）
 └── node_modules/          # 依赖包
 ```
 
+> **数据表说明**：RAG 相关数据全部存于 `data.db`：`rag_chunks`（分块文本）、`rag_vec`（sqlite-vec 向量虚拟表）、`rag_index_meta`（建库模式/模型/维度）、`user_settings`（向量化提供商选择）。旧版 `rag_index/` JSON 文件索引已退役，旧书重建索引即可迁移。
+
 ## 安全说明
 
-1. **密钥加密**：所有 API 密钥使用 AES-256-CBC 加密存储
+1. **密钥加密**：所有 API 密钥（含 Embedding 密钥）使用 AES-256-CBC 加密存储
 2. **密钥保护**：`ENCRYPTION_KEY` 改变后无法解密旧密钥
-3. **数据隔离**：用户数据基于 UUID 隔离
-4. **数据库存储**：用户数据、API 密钥、书籍元数据等均存储在 SQLite 数据库 (data.db) 中
+3. **数据隔离**：用户数据基于 UUID 隔离，RAG 分块/向量按用户隔离
+4. **数据库存储**：用户数据、API 密钥、书籍元数据、RAG 索引等均存储在 SQLite 数据库 (data.db) 中
 5. **敏感文件**：以下文件已加入 `.gitignore`：
    - `.env`
    - `data.db`
    - `books/`
-   - `rag_index/`（RAG 向量索引）
 
 ## 许可证
 

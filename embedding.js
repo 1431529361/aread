@@ -161,7 +161,9 @@ async function embedTexts(embedder, texts, { retries = 2, timeoutMs = 30000 } = 
                 signal: AbortSignal.timeout(timeoutMs)
             });
             if (!resp.ok) {
-                const err = new Error(`Embedding API 失败: ${resp.status}`);
+                const errBody = await resp.json().catch(() => ({}));
+                const detail = errBody?.error?.message || errBody?.message || '';
+                const err = new Error(`Embedding API 失败: ${resp.status}${detail ? ` - ${detail}` : ''}`);
                 err.status = resp.status;
                 throw err;
             }

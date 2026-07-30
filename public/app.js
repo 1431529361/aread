@@ -1096,10 +1096,20 @@ class AIReadingAssistant {
                         } else if (evt.type === 'tool_call') {
                             this.appendTraceItem(traceEl, 'tool_call', `🔧 调用工具：${evt.name}(${JSON.stringify(evt.args)})`, evt.iteration);
                         } else if (evt.type === 'tool_result') {
-                            const rs = JSON.stringify(evt.result);
                             const failed = evt.result && evt.result.error;
                             const icon = failed ? '❌' : '✅';
-                            this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${icon} 结果：${rs.substring(0, 200)}${rs.length > 200 ? '...' : ''}（${evt.elapsed}ms）`, evt.iteration);
+                            let display;
+                            // 检索类结果（带 results 数组）：展示命中条数 + 每条章节与摘要，避免 JSON 截断造成"只返回一条"的误解
+                            if (!failed && evt.result && Array.isArray(evt.result.results)) {
+                                const lines = evt.result.results.map((r, i) =>
+                                    `　${i + 1}. [${r.chapter || '未知章节'}] ${(r.text || '').substring(0, 40)}…`
+                                ).join('\n');
+                                display = `命中 ${evt.result.results.length} 条（${evt.result.source}）\n${lines}`;
+                            } else {
+                                const rs = JSON.stringify(evt.result);
+                                display = rs.substring(0, 200) + (rs.length > 200 ? '...' : '');
+                            }
+                            this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${icon} 结果：${display}（${evt.elapsed}ms）`, evt.iteration);
                         } else if (evt.type === 'fallback') {
                             this.appendTraceItem(traceEl, 'fallback', `⚠️ ${evt.reason}`);
                         } else if (evt.type === 'final_start') {
@@ -1138,7 +1148,8 @@ class AIReadingAssistant {
         traceEl.classList.add('show');
         const item = document.createElement('div');
         item.className = `trace-item trace-${cls}`;
-        item.innerHTML = `<span class="trace-iter">${iteration ? `#${iteration} ` : ''}</span>${this.escapeHtml(text)}`;
+        // 先转义再把换行转 <br>，支持多行展示（如检索命中列表）
+        item.innerHTML = `<span class="trace-iter">${iteration ? `#${iteration} ` : ''}</span>${this.escapeHtml(text).replace(/\n/g, '<br>')}`;
         traceEl.appendChild(item);
         traceEl.scrollTop = traceEl.scrollHeight;
         this.scrollChatToBottom();

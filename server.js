@@ -14,6 +14,7 @@ const { authMiddleware, registerHandler, loginHandler, meHandler, addDefaultBook
 const { runAgentLoop } = require('./agent');
 const rag = require('./rag');
 const embeddingMod = require('./embedding');
+const llmClient = require('./llm-client');
 const { runTask, listTasks } = require('./orchestrator');
 const conv = require('./conversation');
 
@@ -879,7 +880,6 @@ app.post('/api/ask-stream', async (req, res) => {
         const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
         const contextLimit = conv.getModelContextLimit(model);
         const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
-        const apiEndpoint = providerConfig.apiEndpoint;
 
         // ==================== 会话上下文准备 ====================
         const ctxLLM = { apiKey, providerConfig, model };
@@ -913,42 +913,6 @@ app.post('/api/ask-stream', async (req, res) => {
         const freshConv = conv.getConversation(req.user.id, conversation.id);
         const messages = conv.buildModelMessages(freshConv, baseSystemPrompt, { memoriesText });
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60000);
-
-        const response = await fetch(apiEndpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model,
-                messages,
-                temperature: 0.3,
-                max_tokens: 2000,
-                stream: true
-            }),
-            signal: controller.signal
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            console.error(`${providerConfig.name} API错误:`, response.status, errorData);
-            clearTimeout(timeout);
-            return res.status(response.status).json({ error: `API请求失败: ${response.status}`, provider: providerId });
-        }
-
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Accel-Buffering', 'no');
-
-        res.write(`data: ${JSON.stringify({ type: 'start', model, provider: providerConfig.name, conversationId: conversation.id, tokens: freshConv.token_estimate, limit: contextLimit })}\n\n`);
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
         let fullContent = '';
 
         // 对话结束后的持久化 + 后处理（压缩 / 记忆抽取），返回最新 token 统计
@@ -968,42 +932,38 @@ app.post('/api/ask-stream', async (req, res) => {
             return conv.getConversation(req.user.id, conversation.id).token_estimate;
         };
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    const dataStr = line.slice(6);
-                    if (dataStr.trim() === '[DONE]') {
-                        const finalTokens = await finalize();
-                        res.write(`data: ${JSON.stringify({ type: 'session_update', tokens: finalTokens, limit: contextLimit })}\n\n`);
-                        res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent, conversationId: conversation.id })}\n\n`);
-                        res.end();
-                        clearTimeout(timeout);
-                        return;
-                    }
-                    try {
-                        const parsed = JSON.parse(dataStr);
-                        const content = parsed.choices?.[0]?.delta?.content || '';
-                        if (content) {
-                            fullContent += content;
-                            res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
-                        }
-                    } catch (e) {}
+        // 统一流式调用：响应确认 2xx 后才写 SSE 头（非 2xx 仍可返回 JSON 错误）
+        try {
+            await llmClient.stream(ctxLLM, {
+                messages,
+                temperature: 0.3,
+                maxTokens: 2000,
+                timeoutMs: 60000,
+                onStart: () => {
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.setHeader('X-Accel-Buffering', 'no');
+                    res.write(`data: ${JSON.stringify({ type: 'start', model, provider: providerConfig.name, conversationId: conversation.id, tokens: freshConv.token_estimate, limit: contextLimit })}\n\n`);
+                },
+                onChunk: (content) => {
+                    fullContent += content;
+                    res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
                 }
+            });
+        } catch (streamErr) {
+            // 上游非 2xx：保持既有行为，直接以对应状态码返回 JSON
+            if (streamErr.status && !res.headersSent) {
+                console.error(`${providerConfig.name} API错误:`, streamErr.status, streamErr.body || {});
+                return res.status(streamErr.status).json({ error: `API请求失败: ${streamErr.status}`, provider: providerId });
             }
+            throw streamErr;
         }
 
         const finalTokens = await finalize();
         res.write(`data: ${JSON.stringify({ type: 'session_update', tokens: finalTokens, limit: contextLimit })}\n\n`);
         res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent, conversationId: conversation.id })}\n\n`);
         res.end();
-        clearTimeout(timeout);
     } catch (error) {
         console.error('流式AI调用错误:', error);
         if (!res.headersSent) {
@@ -1016,25 +976,13 @@ app.post('/api/ask-stream', async (req, res) => {
 });
 
 async function callAI(apiKey, selectedText, question, bookName, providerConfig, clientModel) {
-    const apiEndpoint = providerConfig.apiEndpoint;
     const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
     const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-
-    const response = await fetch(apiEndpoint, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-            model,
-            messages: [
-                {
-                    role: 'system',
-                    content: `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
+    const messages = [
+        {
+            role: 'system',
+            content: `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
 1. 如果用户的问题可以直接基于选中的文本回答，请优先依据原文内容作答
 2. 如果用户正在阅读一本已知的书籍（如名著、经典作品），你可以利用自己对该书的了解来回答问题，但必须明确标注哪些是原文内容、哪些是你补充的原著知识
 3. 如果问题与选中文本无关，但你根据书名能够回答，请直接回答，并注明"根据原著"或"根据相关知识"
@@ -1043,29 +991,26 @@ async function callAI(apiKey, selectedText, question, bookName, providerConfig, 
 6. 不要拒绝回答，尽量给出有帮助的信息
 7. 保持客观中立，尊重原著内容
 8. 当用户询问你是什么模型、是谁、使用什么技术时，如实告知用户你当前使用的模型名称（${model}）`
-                },
-                {
-                    role: 'user',
-                    content: `${bookContext}选中的文本：\n"${selectedText}"\n\n问题：${question}`
-                }
-            ],
-            temperature: 0.3,
-            max_tokens: 2000
-        }),
-        signal: controller.signal
-    });
+        },
+        {
+            role: 'user',
+            content: `${bookContext}选中的文本：\n"${selectedText}"\n\n问题：${question}`
+        }
+    ];
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`${providerConfig.name} API错误:`, response.status, errorData);
-        if (response.status === 401) throw new Error('API密钥认证失败');
-        throw new Error(`API请求失败: ${response.status}`);
+    try {
+        const answer = await llmClient.complete(
+            { apiKey, providerConfig, model },
+            messages,
+            { temperature: 0.3, maxTokens: 2000, timeoutMs: 60000 }
+        );
+        return { answer, model };
+    } catch (error) {
+        console.error(`${providerConfig.name} API错误:`, error.status || '', error.body || error.message);
+        if (error.status === 401) throw new Error('API密钥认证失败');
+        if (error.status) throw new Error(`API请求失败: ${error.status}`);
+        throw error;
     }
-
-    const data = await response.json();
-    return { answer: data.choices[0].message.content, model };
 }
 
 // ==================== Agent Routes (Function Calling + RAG + Multi-Agent) ====================
@@ -1228,10 +1173,12 @@ app.post('/api/agent/stream', async (req, res) => {
         res.end();
     } catch (error) {
         console.error('Agent 流式错误:', error);
+        const isTimeout = error.name === 'AbortError' || error.name === 'TimeoutError';
+        const friendly = isTimeout ? 'AI 响应超时，请稍后重试' : error.message;
         if (!res.headersSent) {
-            res.status(500).json({ error: `Agent 服务失败: ${error.message}` });
+            res.status(isTimeout ? 504 : 500).json({ error: `Agent 服务失败: ${friendly}` });
         } else {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: 'error', error: friendly })}\n\n`);
             res.end();
         }
     }
