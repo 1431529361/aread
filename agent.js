@@ -101,11 +101,8 @@ async function executeTool(name, args, ctx) {
     switch (name) {
         case 'searchInBook': {
             const query = args.query || '';
-            // 优先向量检索（若已 embedding），回退 BM25
-            const embedQueryFn = (ctx.apiKey && ctx.providerId)
-                ? (q) => rag.embed([q], ctx.apiKey, ctx.providerId).then(v => v[0])
-                : null;
-            const hits = await rag.retrieveAsync(ctx.userId, ctx.bookId, query, 5, embedQueryFn);
+            // 混合检索（向量 + BM25 双路召回 RRF 融合）；query 向量化由 rag 内部按建库 meta 自行解析
+            const hits = await rag.retrieveAsync(ctx.userId, ctx.bookId, query, 5);
             if (hits.length === 0) {
                 // 无 RAG 索引时，回退全文子串搜索
                 const idx = ctx.content ? ctx.content.indexOf(query) : -1;
@@ -114,9 +111,10 @@ async function executeTool(name, args, ctx) {
                 }
                 return { source: 'empty', message: '未在书中检索到相关内容，建议基于选中文本回答' };
             }
+            const status = rag.getIndexStatus(ctx.userId, ctx.bookId);
             return {
-                source: hits[0].score > 0.5 && ctx.vectors ? 'embedding' : 'bm25',
-                results: hits.map(h => ({ chapter: h.chapter, score: Number(h.score.toFixed(4)), text: truncate(h.text, 600) }))
+                source: status.mode === 'embedding+bm25' ? 'hybrid(embedding+bm25)' : 'bm25',
+                results: hits.map(h => ({ chapter: h.chapter, score: h.score, text: truncate(h.text, 600) }))
             };
         }
         case 'getChapterInfo': {

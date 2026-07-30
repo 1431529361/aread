@@ -9,10 +9,11 @@ const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 require('dotenv').config();
 
-const { initDB, getDB } = require('./database');
+const { initDB, getDB, isVecAvailable } = require('./database');
 const { authMiddleware, registerHandler, loginHandler, meHandler, addDefaultBooksForUser } = require('./auth');
 const { runAgentLoop } = require('./agent');
 const rag = require('./rag');
+const embeddingMod = require('./embedding');
 const { runTask, listTasks } = require('./orchestrator');
 const conv = require('./conversation');
 
@@ -33,6 +34,9 @@ let db;
 
 async function startServer() {
     db = await initDB();
+
+    // 注入 Key 读取能力（解密逻辑在本文件），供 embedding 模块解析向量化提供商
+    embeddingMod.init({ getApiKey: getStoredApiKey });
 
 app.use(cors());
 app.use(express.json());
@@ -68,6 +72,17 @@ function decrypt(encryptedData) {
         console.error('解密失败:', error);
         return null;
     }
+}
+
+// 读取用户存储的某 provider 的 Key（仅查表 + 智谱/硅基流动 .env 兜底，不回退到通用 AI_API_KEY）
+function getStoredApiKey(userId, providerId) {
+    const row = db.prepare('SELECT encrypted_key FROM api_keys WHERE user_id = ? AND provider = ?').get(userId, providerId);
+    if (row) {
+        const key = decrypt(row.encrypted_key);
+        if (key) return key;
+    }
+    const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
+    return envKeyMap[providerId] ? (process.env[envKeyMap[providerId]] || null) : null;
 }
 
 function formatFileSize(bytes) {
@@ -343,6 +358,89 @@ app.delete('/api/key', (req, res) => {
         console.error('删除API密钥失败:', error);
         res.status(500).json({ error: '删除API密钥失败' });
     }
+});
+
+// ==================== Embedding（RAG 向量化）设置 Routes ====================
+
+app.get('/api/embedding-settings', (req, res) => {
+    const settings = embeddingMod.getEmbeddingSettings(req.user.id);
+    const keyRow = db.prepare('SELECT masked_key FROM api_keys WHERE user_id = ? AND provider = ?')
+        .get(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER);
+    // 预置提供商（智谱/硅基流动）复用对话 Key，这里只报告是否已配置
+    const presetKeyStatus = {};
+    for (const pid of Object.keys(embeddingMod.PRESET_PROVIDERS)) {
+        presetKeyStatus[pid] = !!getStoredApiKey(req.user.id, pid);
+    }
+    const active = embeddingMod.resolveEmbedder(req.user.id);
+    res.json({
+        provider: settings.provider,
+        aliyun: {
+            baseUrl: settings.aliyun.baseUrl || '',
+            model: settings.aliyun.model || '',
+            hasKey: !!(keyRow || process.env.EMBED_API_KEY),
+            maskedKey: keyRow ? keyRow.masked_key : null
+        },
+        presetKeyStatus,
+        vectorAvailable: isVecAvailable(),
+        active: active ? { providerId: active.providerId, providerName: active.providerName, model: active.model } : null
+    });
+});
+
+app.put('/api/embedding-settings', async (req, res) => {
+    const { provider, aliyunBaseUrl, aliyunModel, aliyunApiKey } = req.body;
+    try {
+        embeddingMod.saveEmbeddingSettings(req.user.id, {
+            provider,
+            aliyun: { baseUrl: aliyunBaseUrl, model: aliyunModel }
+        });
+
+        // 可选：保存阿里云 Embedding Key（先实际调一次 embeddings 接口校验）
+        if (aliyunApiKey) {
+            if (typeof aliyunApiKey !== 'string' || aliyunApiKey.length < 20) {
+                return res.status(400).json({ error: 'API密钥长度不足，请检查密钥是否完整' });
+            }
+            const settings = embeddingMod.getEmbeddingSettings(req.user.id);
+            if (!settings.aliyun.baseUrl || !settings.aliyun.model) {
+                return res.status(400).json({ error: '请先填写阿里云接口地址（Base URL）和模型名称' });
+            }
+            const testEmbedder = {
+                providerId: 'aliyun',
+                endpoint: settings.aliyun.baseUrl.replace(/\/+$/, '') + '/embeddings',
+                model: settings.aliyun.model,
+                dims: embeddingMod.EMBED_DIMS,
+                apiKey: aliyunApiKey
+            };
+            try {
+                await embeddingMod.validateEmbedder(testEmbedder);
+            } catch (e) {
+                return res.status(400).json({ error: `Embedding 密钥校验失败: ${e.message}` });
+            }
+            const encryptedKey = encrypt(aliyunApiKey);
+            const maskedKey = aliyunApiKey.substring(0, 8) + '****' + aliyunApiKey.substring(aliyunApiKey.length - 4);
+            db.prepare(`
+                INSERT INTO api_keys (user_id, provider, encrypted_key, masked_key, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, provider) DO UPDATE SET
+                    encrypted_key = excluded.encrypted_key,
+                    masked_key = excluded.masked_key,
+                    last_updated = excluded.last_updated
+            `).run(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER, encryptedKey, maskedKey, new Date().toISOString());
+        }
+
+        const active = embeddingMod.resolveEmbedder(req.user.id);
+        res.json({
+            success: true,
+            active: active ? { providerId: active.providerId, providerName: active.providerName, model: active.model } : null
+        });
+    } catch (error) {
+        res.status(400).json({ error: error.message || '保存设置失败' });
+    }
+});
+
+app.delete('/api/embedding-settings/aliyun-key', (req, res) => {
+    db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?')
+        .run(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER);
+    res.json({ success: true, message: '阿里云 Embedding 密钥已删除' });
 });
 
 // ==================== Provider Routes ====================
@@ -1012,17 +1110,15 @@ app.get('/api/books/:id/index-status', (req, res) => {
 // 触发 RAG 索引
 app.post('/api/books/:id/index', async (req, res) => {
     const bookId = req.params.id;
-    const { provider } = req.body;
-    const providerId = provider || 'zhipu';
     const data = getBookContent(req.user.id, bookId);
     if (!data) return res.status(404).json({ error: '书籍不存在或无法读取' });
     if (!data.supported) return res.status(400).json({ error: '当前仅支持 TXT 格式的智能索引' });
 
-    const apiKey = resolveApiKey(req.user.id, providerId);
+    // 按用户 Embedding 设置解析向量化提供商（不可用则纯 BM25）
+    const embedder = embeddingMod.resolveEmbedder(req.user.id);
     try {
         const result = await rag.indexBook({
-            bookId, userId: req.user.id, content: data.content,
-            apiKey, providerId
+            bookId, userId: req.user.id, content: data.content, embedder
         });
         res.json({ success: true, ...result });
     } catch (e) {
