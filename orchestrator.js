@@ -6,49 +6,14 @@
  * - 全程通过 onEvent 推送进度（node_start / node_progress / node_done / node_error / task_done）
  */
 
-const { splitChapters } = require('./agent');
+const { splitChapters } = require('./text-utils');
+const llmClient = require('./llm-client');
 
 // ==================== 通用 LLM 调用 ====================
 
-async function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5, timeoutMs = 120000, retries = 2 } = {}) {
-    const apiEndpoint = ctx.providerConfig.apiEndpoint;
-    const model = ctx.model || ctx.providerConfig.defaultModel;
-    let lastErr;
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-            const resp = await fetch(apiEndpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.apiKey}` },
-                body: JSON.stringify({
-                    model,
-                    messages: [{ role: 'user', content: prompt }],
-                    temperature,
-                    max_tokens: maxTokens
-                }),
-                signal: controller.signal
-            });
-            if (!resp.ok) {
-                const err = new Error(`LLM调用失败: ${resp.status}`);
-                err.status = resp.status;
-                throw err;
-            }
-            const data = await resp.json();
-            return data.choices[0].message.content.trim();
-        } catch (e) {
-            lastErr = e;
-            // 4xx 客户端错误（模型不存在/请求非法，429 限流除外）重试无意义，直接抛出
-            const status = e.status || 0;
-            const isFatalClientError = status >= 400 && status < 500 && status !== 429;
-            if (isFatalClientError) break;
-            // 超时/限流/服务端错误：退避后重试
-            if (attempt < retries) await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-        } finally {
-            clearTimeout(timeout);
-        }
-    }
-    throw lastErr;
+// 统一走 llm-client，保留编排器默认参数（长超时 + 2 次退避重试）
+function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5, timeoutMs = 120000, retries = 2 } = {}) {
+    return llmClient.complete(ctx, prompt, { maxTokens, temperature, timeoutMs, retries });
 }
 
 // ==================== 并发控制 ====================

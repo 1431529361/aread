@@ -1,10 +1,12 @@
 const Database = require('better-sqlite3');
+const sqliteVec = require('sqlite-vec');
 const path = require('path');
 const fs = require('fs');
 
 const DB_PATH = path.join(__dirname, 'data.db');
 
 let db = null;
+let vecAvailable = false; // sqlite-vec 扩展是否加载成功（失败时 RAG 自动降级为纯 BM25）
 
 /**
  * 使用 better-sqlite3 作为底层驱动（方案 A）。
@@ -39,6 +41,15 @@ function createDbWrapper(sqliteDb) {
 
 async function initDB() {
     const sqliteDb = new Database(DB_PATH);
+
+    // 加载 sqlite-vec 向量扩展（用于 RAG 向量检索）；加载失败不阻塞启动
+    try {
+        sqliteVec.load(sqliteDb);
+        vecAvailable = true;
+    } catch (e) {
+        console.warn('sqlite-vec 扩展加载失败，向量检索不可用（RAG 将使用纯 BM25）:', e.message);
+    }
+
     db = createDbWrapper(sqliteDb);
 
     db.pragma('journal_mode = WAL');
@@ -153,6 +164,40 @@ async function initDB() {
             UNIQUE(user_id, book_id, task_type)
         );
 
+        -- ==================== RAG 相关表 ====================
+
+        -- 用户设置表（通用 KV，如 embedding_provider）
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            key TEXT NOT NULL,
+            value TEXT,
+            updated_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, key)
+        );
+
+        -- RAG 分块表：每本书的文本切块
+        CREATE TABLE IF NOT EXISTS rag_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            book_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            chapter TEXT,
+            text TEXT NOT NULL
+        );
+
+        -- RAG 索引元信息：记录建库时的 embedding 模型，保证查询侧同模型
+        CREATE TABLE IF NOT EXISTS rag_index_meta (
+            user_id TEXT NOT NULL,
+            book_id TEXT NOT NULL,
+            mode TEXT NOT NULL,                     -- embedding+bm25 / bm25
+            embed_provider TEXT,
+            embed_model TEXT,
+            dims INTEGER,
+            chunk_count INTEGER DEFAULT 0,
+            indexed_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, book_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
         CREATE INDEX IF NOT EXISTS idx_custom_prov_user ON custom_providers(user_id);
         CREATE INDEX IF NOT EXISTS idx_books_meta_user ON books_meta(user_id);
@@ -161,7 +206,18 @@ async function initDB() {
         CREATE INDEX IF NOT EXISTS idx_msg_conv_seq ON messages(conversation_id, seq);
         CREATE INDEX IF NOT EXISTS idx_mem_user ON user_memories(user_id, salience DESC);
         CREATE INDEX IF NOT EXISTS idx_taskres_user_book ON task_results(user_id, book_id);
+        CREATE INDEX IF NOT EXISTS idx_rag_chunks_user_book ON rag_chunks(user_id, book_id);
     `);
+
+    // 向量虚拟表（vec0 不支持 IF NOT EXISTS 之外的普通建表语法差异，单独建）
+    if (vecAvailable) {
+        try {
+            db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS rag_vec USING vec0(embedding float[1024])');
+        } catch (e) {
+            console.warn('创建 rag_vec 虚拟表失败，向量检索不可用:', e.message);
+            vecAvailable = false;
+        }
+    }
 
     return db;
 }
@@ -171,4 +227,8 @@ function getDB() {
     return db;
 }
 
-module.exports = { initDB, getDB };
+function isVecAvailable() {
+    return vecAvailable;
+}
+
+module.exports = { initDB, getDB, isVecAvailable };

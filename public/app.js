@@ -303,6 +303,7 @@ class AIReadingAssistant {
         if (view === 'settings') {
             this.checkApiKeyStatus();
             this.updateMyPage();
+            this.loadEmbeddingSettings();
         }
         if (view === 'bookshelf') this.loadBooks();
         if (view === 'history') this.loadHistory();
@@ -1095,10 +1096,20 @@ class AIReadingAssistant {
                         } else if (evt.type === 'tool_call') {
                             this.appendTraceItem(traceEl, 'tool_call', `🔧 调用工具：${evt.name}(${JSON.stringify(evt.args)})`, evt.iteration);
                         } else if (evt.type === 'tool_result') {
-                            const rs = JSON.stringify(evt.result);
                             const failed = evt.result && evt.result.error;
                             const icon = failed ? '❌' : '✅';
-                            this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${icon} 结果：${rs.substring(0, 200)}${rs.length > 200 ? '...' : ''}（${evt.elapsed}ms）`, evt.iteration);
+                            let display;
+                            // 检索类结果（带 results 数组）：展示命中条数 + 每条章节与摘要，避免 JSON 截断造成"只返回一条"的误解
+                            if (!failed && evt.result && Array.isArray(evt.result.results)) {
+                                const lines = evt.result.results.map((r, i) =>
+                                    `　${i + 1}. [${r.chapter || '未知章节'}] ${(r.text || '').substring(0, 40)}…`
+                                ).join('\n');
+                                display = `命中 ${evt.result.results.length} 条（${evt.result.source}）\n${lines}`;
+                            } else {
+                                const rs = JSON.stringify(evt.result);
+                                display = rs.substring(0, 200) + (rs.length > 200 ? '...' : '');
+                            }
+                            this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${icon} 结果：${display}（${evt.elapsed}ms）`, evt.iteration);
                         } else if (evt.type === 'fallback') {
                             this.appendTraceItem(traceEl, 'fallback', `⚠️ ${evt.reason}`);
                         } else if (evt.type === 'final_start') {
@@ -1137,7 +1148,8 @@ class AIReadingAssistant {
         traceEl.classList.add('show');
         const item = document.createElement('div');
         item.className = `trace-item trace-${cls}`;
-        item.innerHTML = `<span class="trace-iter">${iteration ? `#${iteration} ` : ''}</span>${this.escapeHtml(text)}`;
+        // 先转义再把换行转 <br>，支持多行展示（如检索命中列表）
+        item.innerHTML = `<span class="trace-iter">${iteration ? `#${iteration} ` : ''}</span>${this.escapeHtml(text).replace(/\n/g, '<br>')}`;
         traceEl.appendChild(item);
         traceEl.scrollTop = traceEl.scrollHeight;
         this.scrollChatToBottom();
@@ -1294,7 +1306,7 @@ class AIReadingAssistant {
 
 
     async indexBook(bookId, force = false) {
-        if (!this.isProviderConfigured()) { this.showModal(); return; }
+        // 建索引不依赖对话提供商密钥（向量化由 RAG 设置解析，未配置时后端自动降级 BM25），不做密钥门槛拦截
         const book = this.books.find(b => b.id === bookId);
 
         // 非强制重建时，先查索引状态；已索引则提供重建/删除选项，避免重复耗时重建
@@ -1317,12 +1329,15 @@ class AIReadingAssistant {
         try {
             const response = await this.apiFetch(`/api/books/${bookId}/index`, {
                 method: 'POST',
-                body: JSON.stringify({ provider: this.currentProvider, model: this.currentModel })
+                body: JSON.stringify({})
             });
             const data = await response.json();
             if (response.ok) {
                 const modeText = data.mode === 'embedding+bm25' ? '向量+BM25' : 'BM25 关键词';
                 this.appendTaskLog(`<div class="log-success">✅ 索引完成：${data.chunkCount} 个文本块，模式：${modeText}</div>`);
+                if (data.embedError) {
+                    this.appendTaskLog(`<div class="log-error">⚠️ 向量化失败已降级 BM25：${data.embedError}</div>`);
+                }
                 this.setTaskProgress(100, '索引完成');
             } else {
                 this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`);
@@ -1787,6 +1802,82 @@ class AIReadingAssistant {
         this.apiKeyModal.addEventListener('click', (e) => { if (e.target === this.apiKeyModal) this.hideModal(); });
         document.getElementById('apiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveApiKey(); });
         document.getElementById('modalApiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveApiKeyFromModal(); });
+
+        // 智能索引（RAG）设置
+        document.getElementById('embedProviderSelect').addEventListener('change', () => this.updateEmbedConfigVisibility());
+        document.getElementById('saveEmbedSettingsBtn').addEventListener('click', () => this.saveEmbeddingSettings());
+        document.getElementById('deleteEmbedKeyBtn').addEventListener('click', () => this.deleteEmbedAliyunKey());
+    }
+
+    // ==================== Embedding (RAG) Settings ====================
+
+    updateEmbedConfigVisibility() {
+        const provider = document.getElementById('embedProviderSelect').value;
+        // auto 也可能用到阿里云，展示配置区便于填写
+        document.getElementById('embedAliyunConfig').style.display =
+            (provider === 'aliyun' || provider === 'auto') ? 'block' : 'none';
+    }
+
+    async loadEmbeddingSettings() {
+        try {
+            const res = await this.apiFetch('/api/embedding-settings');
+            if (!res.ok) return;
+            const data = await res.json();
+            this.embedSettings = data;
+            document.getElementById('embedProviderSelect').value = data.provider || 'auto';
+            document.getElementById('embedAliyunBaseUrl').value = data.aliyun.baseUrl || '';
+            document.getElementById('embedAliyunModel').value = data.aliyun.model || '';
+            const keyStatus = document.getElementById('embedAliyunKeyStatus');
+            keyStatus.textContent = data.aliyun.hasKey ? `（已配置 ${data.aliyun.maskedKey || ''}，留空则不修改）` : '';
+            document.getElementById('deleteEmbedKeyBtn').style.display = data.aliyun.maskedKey ? 'inline-flex' : 'none';
+            const hint = document.getElementById('embedActiveHint');
+            if (!data.vectorAvailable) {
+                hint.textContent = '⚠️ 服务端向量扩展不可用，当前仅支持 BM25 检索';
+            } else if (data.provider === 'off') {
+                hint.textContent = '已关闭向量化，建索引时仅使用 BM25 关键词检索';
+            } else if (data.active) {
+                hint.textContent = `✅ 当前生效：${data.active.providerName} · ${data.active.model}`;
+            } else {
+                hint.textContent = '⚠️ 暂无可用的向量化提供商（未配置密钥），建索引时将使用 BM25。';
+            }
+            this.updateEmbedConfigVisibility();
+        } catch {}
+    }
+
+    async saveEmbeddingSettings() {
+        const btn = document.getElementById('saveEmbedSettingsBtn');
+        const provider = document.getElementById('embedProviderSelect').value;
+        const aliyunBaseUrl = document.getElementById('embedAliyunBaseUrl').value.trim();
+        const aliyunModel = document.getElementById('embedAliyunModel').value.trim();
+        const aliyunApiKey = document.getElementById('embedAliyunKey').value.trim();
+        if (provider === 'aliyun' && (!aliyunBaseUrl || !aliyunModel)) {
+            this.showToast('请填写阿里云接口地址和模型名称');
+            return;
+        }
+        btn.classList.add('loading'); btn.disabled = true;
+        try {
+            const body = { provider, aliyunBaseUrl, aliyunModel };
+            if (aliyunApiKey) body.aliyunApiKey = aliyunApiKey;
+            const res = await this.apiFetch('/api/embedding-settings', { method: 'PUT', body: JSON.stringify(body) });
+            const data = await res.json();
+            if (res.ok) {
+                this.showToast(data.active ? `设置已保存，当前生效：${data.active.providerName}` : '设置已保存（当前无可用向量化，将使用 BM25）');
+                document.getElementById('embedAliyunKey').value = '';
+                this.loadEmbeddingSettings();
+            } else {
+                this.showToast(data.error || '保存失败');
+            }
+        } catch { this.showToast('保存失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
+    }
+
+    async deleteEmbedAliyunKey() {
+        if (!confirm('确定删除阿里云 Embedding 密钥吗？删除后相关书籍检索将降级为 BM25。')) return;
+        try {
+            const res = await this.apiFetch('/api/embedding-settings/aliyun-key', { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) { this.showToast('密钥已删除'); this.loadEmbeddingSettings(); }
+            else this.showToast(data.error || '删除失败');
+        } catch { this.showToast('删除失败'); }
     }
 
     async checkApiKeyStatus() {

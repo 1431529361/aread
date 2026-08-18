@@ -230,6 +230,57 @@
                             </ul>
                         </div>
                     </div>
+
+                    <!-- RAG / Embedding Settings -->
+                    <div class="settings-card">
+                        <div class="settings-card-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            <h3>智能索引（RAG）</h3>
+                        </div>
+                        <div class="form-group">
+                            <label for="embedProviderSelect">向量化提供商</label>
+                            <select id="embedProviderSelect" class="model-select">
+                                <option value="auto">自动（优先阿里云，其次复用对话提供商）</option>
+                                <option value="aliyun">阿里云（百炼 / MaaS 专属端点）</option>
+                                <option value="zhipu">智谱AI（复用对话密钥）</option>
+                                <option value="siliconflow">硅基流动（复用对话密钥）</option>
+                                <option value="off">关闭向量化（仅 BM25 关键词检索）</option>
+                            </select>
+                            <p class="form-hint" id="embedActiveHint">加载中...</p>
+                        </div>
+                        <div id="embedAliyunConfig" style="display:none">
+                            <div class="form-group">
+                                <label for="embedAliyunBaseUrl">阿里云接口地址（Base URL）</label>
+                                <input type="text" id="embedAliyunBaseUrl" class="api-key-input" placeholder="如：https://xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1">
+                                <p class="form-hint">填写 OpenAI 兼容的 Base URL，系统会自动补全 /embeddings</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="embedAliyunModel">Embedding 模型名称</label>
+                                <input type="text" id="embedAliyunModel" class="api-key-input" placeholder="如：text-embedding-v4">
+                            </div>
+                            <div class="form-group">
+                                <label for="embedAliyunKey">API 密钥 <span class="form-hint" id="embedAliyunKeyStatus"></span></label>
+                                <div class="input-wrapper">
+                                    <input type="password" id="embedAliyunKey" class="api-key-input" placeholder="请输入阿里云 API 密钥">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn btn-primary" id="saveEmbedSettingsBtn">
+                                <span class="btn-text">保存设置</span>
+                                <span class="btn-loading">保存中...</span>
+                            </button>
+                            <button class="btn btn-danger" id="deleteEmbedKeyBtn" style="display:none">删除阿里云密钥</button>
+                        </div>
+                        <div class="api-info-section">
+                            <h3>说明</h3>
+                            <ul class="info-list">
+                                <li>向量化用于建立书籍智能索引，提升 AI 全书检索的语义理解能力</li>
+                                <li>未配置时自动降级为 BM25 关键词检索，功能不受影响</li>
+                                <li>更换提供商后，建议对已索引的书籍重建索引</li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
 

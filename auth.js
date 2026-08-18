@@ -61,6 +61,12 @@ function authMiddleware(req, res, next) {
     try {
         const token = header.slice(7);
         const decoded = jwt.verify(token, JWT_SECRET);
+        // JWT 无状态：用户可能已被删除但 token 仍在有效期，需确认用户仍存在，
+        // 否则幽灵用户会在后续写表时触发外键约束错误
+        const exists = getDB().prepare('SELECT 1 FROM users WHERE id = ?').get(decoded.id);
+        if (!exists) {
+            return res.status(401).json({ error: '账号不存在或已注销，请重新登录', needAuth: true });
+        }
         req.user = { id: decoded.id, username: decoded.username };
         next();
     } catch (err) {
