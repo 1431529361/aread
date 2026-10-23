@@ -26,6 +26,7 @@
 | 向量化 | **一个自定义 OpenAI 兼容 Embedding 端点**，用户自带 Key，统一 1024 维 |
 | 向量模型 | 整个书库统一一个模型；换模型触发全库重建；只接受 1024 维；不做自动兜底 |
 | 重排 | 向量模型设置下可选 Rerank Model，复用 Embedding 的 Base URL/API Key；留空即不启用 |
+| 长任务上下文 | chat 设置可选 `context_window`（默认 200000）；单次预算 = min(context_window × 0.6, 100000)，超限自动走分层 map-reduce |
 | 数据 | 纯本地 SQLite；不做 Web 版数据迁移；但必须做 App 内备份导出/导入 |
 | 加密 | v1 不做数据库加密、不做应用锁；Key 必须存 SecureStore，关闭 Android 自动备份 |
 | 会话 | 本书会话（默认）+ 独立书库会话（跨书检索） |
@@ -119,7 +120,7 @@ mobile/
 - `index_jobs`：记录 `book_id`、`stage`、`cursor`、`error`、`updated_at`，用于断点续跑
 - **`provider_config`**（替代原 `api_keys` + `custom_providers`）：
   - `kind TEXT PRIMARY KEY`（`chat` / `embedding`）
-  - `base_url`、`model`、`dims`（embedding 输出固定 1024）、`dimensions_param`（可选，可空）、`rerank_model`（可选，仅 embedding 行；留空不启用）、`masked_key`、`updated_at`
+  - `base_url`、`model`、`dims`（embedding 输出固定 1024）、`dimensions_param`（可选，可空）、`rerank_model`（可选，仅 embedding 行；留空不启用）、`context_window`（可选，仅 chat 行，默认 200000）、`masked_key`、`updated_at`
   - 真实 Key 存 SecureStore：`chat_api_key`、`embedding_api_key`
 - `embed_sig` = `sha256(base_url + '|' + model + '|' + dimensions_param + '|' + dims)` 的短哈希，用于判断索引是否过期
 
@@ -183,6 +184,7 @@ pending → chunking → lexical_ready → embedding → ready
 **对话模型**
 
 - Base URL、API Key、Model
+- 可选 `context_window`（默认 200000；用于读书笔记/人物分析等长任务的上下文预算）
 - 调用 `POST {baseUrl}/chat/completions`
 - 提供“测试连接”
 

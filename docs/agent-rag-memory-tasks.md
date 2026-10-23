@@ -31,7 +31,7 @@
 | P2-2 | Procedural memory / 提示词优化 | memory | 2 天 | P0-4 | v2 |
 | P2-3 | Agent trace 持久化与回放 | agent | 1 天 | P0-1 | v2 |
 
-> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2、P1-3、P1-4、P1-6（live 基线）已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-5 待排期。
+> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2、P1-3、P1-4、P1-6（live 基线）已完成，均各有独立 commit。P1-5 已实现并通过单测，真实书集成结果见 P1-5 状态。S-1 按用户要求暂不在 Web 端执行。
 
 ## 2. P0 任务详情
 
@@ -299,11 +299,25 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 > 当前状态（2026-10-23）：9 个默认工具已注册；同轮工具并发 3、结果按原顺序回灌；章节列表使用独立结果截断上限。并行/取消/多工具回灌均有单测；延迟与轮次收益待 P1-6 评测集。
 
 ### P1-5 全书分层 map-reduce
-- 修复现有问题：只取前 8 章、每章前 2000 字（`orchestrator.js:95`、`orchestrator.js:147`）。
-- 章节摘要按 chapter hash 缓存，支持增量重跑。
-- 人物分析改为全量提及索引 + 聚合，而不是首次出现附近 600 字（`orchestrator.js:270`）。
-- 使用结构化输出与失败重试；节点失败保留错误信息。
-- 验收：长书笔记覆盖全部章节；人物分析引用全部主要出场片段。
+- [x] 修复现有问题：只取前 8 章、每章前 2000 字（`orchestrator.js:95`、`orchestrator.js:147`）。
+  - 短章节整章作为 Map 单元并批量；长章节按 6k chunk map + chapter reduce；全部章节都进入 Map。
+- [x] 章节摘要按 chapter hash 缓存，支持增量重跑。
+- [x] 人物分析改为全量提及索引 + 聚合，而不是首次出现附近 600 字（`orchestrator.js:270`）。
+- [x] 使用结构化输出与失败重试；节点失败保留错误信息。
+- [x] 验收：长书笔记覆盖全部章节；人物分析引用全部主要出场片段。
+  - 《百年孤独》全书已验证；《忏悔录》按用户要求本次不测，长章节多 chunk 逻辑由单测覆盖。
+
+> 当前状态（2026-10-23）：`core/orchestrator/{dag,notes,characters,prompts,json,cache}.ts`、`services/taskRunner.ts`、migration v6（`task_runs`、`task_node_cache`、`provider_config.context_window`）已完成。
+> - 上下文策略：chat `context_window` 默认 200000；单次预算 = `min(context_window × 0.6, 100000)`，超过即走分层；单次调用遇 400 context/length 错误自动降级并发出 `fallback` 事件。
+> - DAG 依赖就绪并行、并发 3、取消、节点失败隔离；缓存键包含 `unit_hash` + `prompt_version` + `model_sig`。
+> - 笔记：短章节（≤14k 字符）整章作为一个 Map 单元，2~3 章 / ≤12k 字符贪心批量；单章缓存，批量只打包未缓存章节。长章节按 6k chunk map → chapter reduce；>10 章再 part reduce；最终 Markdown 逐章拼接并保留 locator。
+> - 人物：短章节按 2~3 章批量抽取提及，长章节仍按 chunk；全量提及 + quote offset locator + 确定性别名合并 + 主要人物分析 + 关系报告。
+> - 批量结果强校验 chapterIndex 齐全/数量一致/无跨章；失败重试一次后逐章降级；单章缓存粒度保证改一章只重跑该章。
+> - 单测覆盖 DAG、缓存、全章节覆盖、短章批量（20×1.5k 章 → 7 次调用）、长章节多 chunk、人物 locator/别名、partial、取消与上下文超限降级。
+> - 真实书结果：
+>   - 《百年孤独》：20 个编号章节 + 前言；notes 29 个 Map 单元 / 2 个分部，coverage 100%，locator 21/21，201s，0 error；人物 67 人 / 269 次提及，引用 locator 48/48，300s，0 error。
+>   - 《忏悔录》：按用户要求本次不跑。
+> - 批量规划单测：20 个 1.5k 短章 → 7 次批量调用（不缓存时），仍按单章缓存；长章节不会跨章合并。
 
 ### P1-6 黄金测试集 + 评测脚本
 - [x] 3 本书 × 10 个问题，覆盖事实、人物、跨章节、追问、拒答。

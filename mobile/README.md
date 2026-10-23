@@ -12,11 +12,12 @@
 - P1 检索优化：追问查询改写、parent-child small-to-big、原生 `/rerank`（复用向量模型 Base URL/Key，`rerank_model` 留空禁用）
 - Agent：OpenAI 兼容 LLM client、9 个工具、预检索证据、引用校验、工具并行执行（并发 3）、流式降级
 - Memory v2：migration v3、ADD/UPDATE/SUPERSEDE/NOOP 写入合并、分层读取与使用统计
+- P1-5 长任务：DAG 调度、节点缓存/增量续跑、短章节 2~3 章批量 Map（单章缓存）、全书分层读书笔记、全量人物提及与关系分析；`context_window` 默认 200k，单次预算 `min(60%, 100k)`，超限自动降级 map-reduce
 - P1-6 评测：3 本合成样书 × 10 题，真实 Embedding/Chat/Rerank 检索与 Agent 评测，输出 Markdown/JSON 报告
 - SQLite schema、顺序 migration、op-sqlite 适配层、备份 ZIP 格式
-- Vitest 单测 226 个
+- Vitest 单测 270 个
 
-真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、设置页 UI、P1-5 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
+真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、设置页 UI 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
 
 ## 常用命令
 
@@ -25,6 +26,7 @@ npm install
 npm test              # Vitest 单测
 npm run typecheck     # tsc --noEmit
 npm run eval          # P1-6 live 评测（读取 .env.eval.local）
+npm run eval:p1-5     # P1-5 真实书笔记/人物分析（可用 P15_BOOK=bainian|chanhui 筛选）
 npx expo start        # 启动 Metro（M0-B 起需 dev build）
 npx expo run:android --device
 ```
@@ -45,10 +47,10 @@ cp .env.eval.example .env.eval.local
 
 ```
 app/                  # expo-router 页面（当前仅占位入口）
-src/core/             # rag / llm / agent / conversation / embedding 纯逻辑
+src/core/             # rag / llm / agent / conversation / embedding / orchestrator 纯逻辑
 src/db/               # schema、migrations、op-sqlite 适配器、repositories
 src/reader/           # locator
-src/services/         # indexing、retrieval、parentExpansion、memory、backup
-evals/                # P1-6 数据集、评测执行器、报告（reports 已忽略）
+src/services/         # indexing、retrieval、parentExpansion、memory、taskRunner、backup
+evals/                # P1-5/P1-6 数据集、评测执行器、报告（reports 已忽略）
 __tests__/            # Vitest 单测
 ```
