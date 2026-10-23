@@ -31,7 +31,7 @@
 | P2-2 | Procedural memory / 提示词优化 | memory | 2 天 | P0-4 | v2 |
 | P2-3 | Agent trace 持久化与回放 | agent | 1 天 | P0-1 | v2 |
 
-> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2 已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-3/4/5/6 待排期。
+> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2、P1-3 已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-4/5/6 待排期。
 
 ## 2. P0 任务详情
 
@@ -338,6 +338,6 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 
 ## 8. 待确认
 
-- 重排服务选型：复用用户已有 Provider，还是单独要求配置 Rerank Key。
+- 重排服务选型：已定复用现有对话 Provider（LLM rerank，不新增 Key）；后续可注入原生 rerank 端点。
 - 记忆抽取的模型：沿用对话模型，还是允许单独配置便宜模型。
 - 评测集由谁维护：开发阶段先用内部样书，发布前再补真实用户问题。

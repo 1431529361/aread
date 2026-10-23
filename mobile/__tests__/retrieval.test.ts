@@ -141,6 +141,43 @@ describe('retrieveInBook', () => {
     expect(Array.isArray(hits)).toBe(true);
     close();
   });
+
+  it('启用 rerank 后按重排结果截取 Top-K', async () => {
+    const { db, b1Ids, close } = await seedLibrary();
+
+    const hits = await retrieveInBook('b1', {
+      db,
+      query: '自由',
+      embedQuery: queryFree,
+      activeSig: 'sig1',
+      dims: 4,
+      topK: 2,
+      rerank: async (_query, candidates) =>
+        [...candidates].sort((a, b) => b.chunkId - a.chunkId),
+    });
+
+    expect(hits.map((hit) => hit.chunkId)).toEqual([b1Ids[2], b1Ids[1]]);
+    close();
+  });
+
+  it('rerank 失败时回退原排序且不影响检索', async () => {
+    const { db, close } = await seedLibrary();
+
+    const hits = await retrieveInBook('b1', {
+      db,
+      query: '自由',
+      embedQuery: queryFree,
+      activeSig: 'sig1',
+      dims: 4,
+      topK: 2,
+      rerank: async () => {
+        throw new Error('rerank offline');
+      },
+    });
+
+    expect(hits.length).toBeGreaterThan(0);
+    close();
+  });
 });
 
 describe('retrieveInLibrary', () => {

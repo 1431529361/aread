@@ -3,6 +3,10 @@ import { loadChunksByIds, queryFts } from '../db/repositories/chunks';
 import { loadVectorsForBook, loadVectorsForChunks } from '../db/repositories/vectors';
 import { rrfFuse } from '../core/rag/rrf';
 import { rankByDot } from '../core/rag/vector';
+import {
+  DEFAULT_RERANK_CANDIDATES,
+  type RerankFunction,
+} from '../core/rag/rerank';
 import { EMBED_DIMS } from '../core/embedding/signature';
 import type { ChunkRecord, RetrievalHit, RetrievalSource } from '../core/types';
 import { expandRetrievalHits } from './parentExpansion';
@@ -23,6 +27,9 @@ export interface RetrievalOptions {
   expandParents?: boolean;
   parentMaxChars?: number;
   parentMaxOverlap?: number;
+  /** 复用现有对话 Provider 的 LLM rerank；失败自动回退原顺序 */
+  rerank?: RerankFunction | null;
+  rerankCandidates?: number;
 }
 
 export const RECALL_N = 20;
@@ -156,6 +163,20 @@ async function queryVectorIfAvailable(
   }
 }
 
+async function applyRerank(
+  rerank: RerankFunction | null | undefined,
+  query: string,
+  hits: readonly RetrievalHit[],
+): Promise<RetrievalHit[]> {
+  if (!rerank || hits.length <= 1) return [...hits];
+  try {
+    const reranked = await rerank(query, hits);
+    return reranked.length > 0 ? reranked : [...hits];
+  } catch {
+    return [...hits];
+  }
+}
+
 /** 单书混合检索：FTS Top-20 + 该书向量 Top-20 → RRF Top-K。 */
 export async function retrieveInBook(
   bookId: string,
@@ -191,13 +212,22 @@ export async function retrieveInBook(
     }
   }
 
-  const fused = fuse(fts, vectors, topK);
+  const candidateN = options.rerank
+    ? Math.max(topK, options.rerankCandidates ?? DEFAULT_RERANK_CANDIDATES)
+    : topK;
+  const fused = await applyRerank(
+    options.rerank,
+    options.query,
+    fuse(fts, vectors, candidateN),
+  );
+  const finalHits = fused.slice(0, topK);
+
   return options.expandParents
-    ? expandRetrievalHits(options.db, fused, {
+    ? expandRetrievalHits(options.db, finalHits, {
         maxChars: options.parentMaxChars,
         maxOverlap: options.parentMaxOverlap,
       })
-    : fused;
+    : finalHits;
 }
 
 /**
@@ -235,11 +265,20 @@ export async function retrieveInLibrary(
     }
   }
 
-  const fused = fuse(fts, vectors, topK);
+  const candidateN = options.rerank
+    ? Math.max(topK, options.rerankCandidates ?? DEFAULT_RERANK_CANDIDATES)
+    : topK;
+  const fused = await applyRerank(
+    options.rerank,
+    options.query,
+    fuse(fts, vectors, candidateN),
+  );
+  const finalHits = fused.slice(0, topK);
+
   return options.expandParents
-    ? expandRetrievalHits(options.db, fused, {
+    ? expandRetrievalHits(options.db, finalHits, {
         maxChars: options.parentMaxChars,
         maxOverlap: options.parentMaxOverlap,
       })
-    : fused;
+    : finalHits;
 }
