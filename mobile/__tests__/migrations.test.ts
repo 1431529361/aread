@@ -127,6 +127,15 @@ describe('runMigrations', () => {
       expect(memoryColumns.has(column)).toBe(true);
     }
 
+    const providerColumns = new Set(
+      (
+        raw.prepare('PRAGMA table_info(provider_config)').all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    expect(providerColumns.has('rerank_model')).toBe(true);
+
     const userVersion = raw.prepare('PRAGMA user_version').get() as {
       user_version: number;
     };

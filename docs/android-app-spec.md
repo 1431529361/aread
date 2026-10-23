@@ -25,6 +25,7 @@
 | 对话模型 | **一个自定义 OpenAI 兼容端点**：Base URL + API Key + Model，只保留一套配置 |
 | 向量化 | **一个自定义 OpenAI 兼容 Embedding 端点**，用户自带 Key，统一 1024 维 |
 | 向量模型 | 整个书库统一一个模型；换模型触发全库重建；只接受 1024 维；不做自动兜底 |
+| 重排 | 向量模型设置下可选 Rerank Model，复用 Embedding 的 Base URL/API Key；留空即不启用 |
 | 数据 | 纯本地 SQLite；不做 Web 版数据迁移；但必须做 App 内备份导出/导入 |
 | 加密 | v1 不做数据库加密、不做应用锁；Key 必须存 SecureStore，关闭 Android 自动备份 |
 | 会话 | 本书会话（默认）+ 独立书库会话（跨书检索） |
@@ -69,6 +70,7 @@
 - **AI 接口约定**：
   - 对话：`POST {baseUrl}/chat/completions`
   - 向量：`POST {baseUrl}/embeddings`
+  - 重排（可选）：`POST {baseUrl}/rerank`，复用向量模型的 Base URL/API Key；请求体 `{ model, query, documents, top_n }`，读取 `results[].index / relevance_score`
   - Base URL 存前缀（如 `https://api.siliconflow.cn/v1`），自动去掉末尾斜杠
   - Embedding 请求体默认只有 `model` 和 `input`；如果配置了可选的 `dimensions` 参数，则一并发送
 - **最低版本**：Android 8.0（API 26），targetSdk 35
@@ -117,7 +119,7 @@ mobile/
 - `index_jobs`：记录 `book_id`、`stage`、`cursor`、`error`、`updated_at`，用于断点续跑
 - **`provider_config`**（替代原 `api_keys` + `custom_providers`）：
   - `kind TEXT PRIMARY KEY`（`chat` / `embedding`）
-  - `base_url`、`model`、`dims`（embedding 输出固定 1024）、`dimensions_param`（可选，可空）、`masked_key`、`updated_at`
+  - `base_url`、`model`、`dims`（embedding 输出固定 1024）、`dimensions_param`（可选，可空）、`rerank_model`（可选，仅 embedding 行；留空不启用）、`masked_key`、`updated_at`
   - 真实 Key 存 SecureStore：`chat_api_key`、`embedding_api_key`
 - `embed_sig` = `sha256(base_url + '|' + model + '|' + dimensions_param + '|' + dims)` 的短哈希，用于判断索引是否过期
 
@@ -188,8 +190,10 @@ pending → chunking → lexical_ready → embedding → ready
 
 - Base URL、API Key、Model
 - 可选的 `dimensions` 请求参数（默认 1024；填写则随请求发送，留空则不发送）
+- **可选的 Rerank Model**：Base URL / API Key 复用向量模型配置；留空即不启用
 - 调用 `POST {baseUrl}/embeddings`
 - **必须返回 1024 维**；保存前用一条测试文本校验，维度不符直接拒绝并提示
+- 启用 Rerank 时调用同一 Base URL 下的 `POST {baseUrl}/rerank`（常见如 `BAAI/bge-reranker-v2-m3`）
 - 提供“测试连接”
 
 规则：
@@ -198,6 +202,7 @@ pending → chunking → lexical_ready → embedding → ready
 - Base URL 只存前缀，自动去除末尾 `/`
 - 修改对话配置只影响新消息，不触发重建
 - 修改向量配置（Base URL / Model / dimensions）会改变 `embed_sig`，提示“需要重建全部索引”，进入重建队列
+- 修改 Rerank Model 不改变 `embed_sig`，不触发索引重建；留空则跳过重排
 - 占位提示可以写常见端点示例，但代码里不写死
 - 若某个端点默认返回非 1024 维（例如部分模型默认 2048 维），在设置里填 `dimensions=1024` 后重新测试
 

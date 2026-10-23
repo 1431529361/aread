@@ -54,6 +54,10 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_rag_chunks_book_parent ON rag_chunks(book_id, parent_index)`,
     ],
   },
+  {
+    version: 5,
+    statements: [`ALTER TABLE provider_config ADD COLUMN rerank_model TEXT`],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

@@ -282,11 +282,12 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 
 ### P1-3 检索重排（rerank）
 - [x] 召回 Top-20 后接 bge-reranker 或同类 API，精排到 Top-5。
-  - 复用现有对话 Provider 做 LLM rerank，无需独立 Rerank Key；也可注入原生 rerank 端点。
+  - 已接入与 Embedding 同一 Base URL/Key 的原生 `POST /rerank`，默认模型 `BAAI/bge-reranker-v2-m3`。
+  - 向量模型设置下新增可选 `rerank_model` 字段，留空即不启用；LLM rerank 保留为可选实现。
 - [x] 失败或无 Key 时自动跳过重排，不影响主流程。
 - [ ] 验收：黄金集上的引用准确率提升；p95 延迟增加 < 500ms。
 
-> 当前状态（2026-10-23）：`core/rag/rerank.ts` 已完成；`retrieveInBook` / `retrieveInLibrary` 支持 `rerank`，默认取 Top-20 候选重排后截取 Top-K。请求失败、解析失败或候选不足时自动回退原顺序；10 项单测覆盖解析、重排与回退。准确率/延迟验收依赖 P1-6。
+> 当前状态（2026-10-23）：`core/rag/rerank.ts` 提供原生 reranker（`createNativeReranker`）与 LLM reranker；`provider_config.rerank_model` + `services/providerSettings.ts` 已完成配置读写。原生 rerank 基线：平均 287ms、p95 408ms；相对混合检索 p95 134ms 增加 274ms，满足 <500ms。合成集 Recall 已达 100%（天花板），rerank 的准确率增益需更长真实书籍验证。
 
 ### P1-4 Agent 工具扩展 + 并行调用
 - [x] 新增工具：`getSurroundingText`、`listChapters`、`getChapter`、`searchNotes`、`searchLibrary`、`getReadingHistory`。
@@ -312,12 +313,12 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
   - `npm run eval`（live 模式，读取本地 `.env.eval.local`）；报告写入 `mobile/evals/reports/latest.{json,md}`。
   - 离线模式与 CI 接入尚未实现；当前需手动执行。
 
-> 基线（2026-10-23，qwen3.8-flash + BAAI/bge-m3，3 本合成书 × 10 题）：
+> 基线（2026-10-23，qwen3.8-flash + BAAI/bge-m3 + BAAI/bge-reranker-v2-m3，3 本合成书 × 10 题）：
 > - 索引：3/3 ready，每本 18 个子块，全部向量化成功。
-> - 检索 Recall@5：FTS 96.3%，混合 100%，混合+rerank 100%，混合+rerank+改写 100%，书库混合 96.3%；locator 正确率 100%。
-> - Agent：引用率 96.3%，无效引用 0%，忠实度 1.0，拒答 100%，平均 4.7s / p95 9.1s。
-> - 风险：rerank 平均 +1.45s、p95 2.56s，未达到“延迟增加 <500ms”目标；合成集上 rerank/改写未带来 Recall 提升（天花板效应），需用更长的真实书籍验证收益。
-> - 单书混合检索 p95 136ms，略高于 100ms 目标；书库检索 p95 3ms（合成语料过小，参考意义有限）。
+> - 检索 Recall@5：FTS 96.3%，混合 100%，混合+原生 rerank 100%，混合+rerank+改写 100%，书库混合 96.3%；locator 正确率 100%。
+> - 延迟：混合 p95 134ms；原生 rerank 平均 287ms / p95 408ms（相对混合 +274ms，达标）；rerank+改写 p95 925ms。
+> - Agent：引用率 100%，无效引用 0%，忠实度 1.0，拒答 100%，平均 3.5s / p95 7.1s。
+> - 风险：合成集较简单，rerank/改写未带来 Recall 提升（天花板效应）；单书混合检索 p95 134ms 仍略高于 100ms；书库 p95 4ms 因语料过小，参考意义有限。
 
 ## 4. P2 备选（v2 再考虑）
 
@@ -343,7 +344,7 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 - 单书检索 p95 < 100ms，书库检索 p95 < 300ms。
 - 日志零密钥泄露。
 
-> 当前基线：引用 96.3%（达标）、Recall@5 100%（达标）、索引成功率 100%（达标）；单书混合检索 p95 136ms、rerank 链路 p95 2.56s（未达标）。详见 P1-6 基线。
+> 当前基线：引用 100%（达标）、Recall@5 100%（达标）、索引成功率 100%（达标）；单书混合检索 p95 134ms（未达标）、原生 rerank 链路 p95 408ms（相对混合 +274ms，达标）。详见 P1-6 基线。
 
 ## 7. 明确不做
 
@@ -356,6 +357,6 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 
 ## 8. 待确认
 
-- 重排服务选型：已定复用现有对话 Provider（LLM rerank，不新增 Key）；后续可注入原生 rerank 端点。
+- 重排服务选型：已定复用现有向量 Provider 的原生 `/rerank`；向量模型设置下可选 Rerank Model（如 `BAAI/bge-reranker-v2-m3`），Base URL/Key 复用 Embedding，留空禁用。
 - 记忆抽取的模型：沿用对话模型，还是允许单独配置便宜模型。
 - 评测集由谁维护：开发阶段先用内部样书，发布前再补真实用户问题。

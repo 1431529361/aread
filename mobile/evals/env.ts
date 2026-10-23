@@ -8,6 +8,8 @@ export interface EvalEnv {
   embedApiKey: string;
   embedModel: string;
   embedDims: number;
+  /** 复用 Embedding Base URL/Key；为空表示不启用 rerank */
+  rerankModel: string | null;
   chatBaseUrl: string;
   chatApiKey: string;
   chatModel: string;
@@ -61,6 +63,7 @@ export function loadEvalEnv(file = EVAL_ENV_FILE): EvalEnv {  const fullPath = p
     embedApiKey: required(values, 'EVAL_EMBED_API_KEY'),
     embedModel: required(values, 'EVAL_EMBED_MODEL'),
     embedDims,
+    rerankModel: values.get('EVAL_RERANK_MODEL')?.trim() || null,
     chatBaseUrl: trimBaseUrl(required(values, 'EVAL_CHAT_BASE_URL')),
     chatApiKey: required(values, 'EVAL_CHAT_API_KEY'),
     chatModel: required(values, 'EVAL_CHAT_MODEL'),

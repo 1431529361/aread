@@ -9,14 +9,14 @@
 
 - 核心纯逻辑：分词、分块 + locator、FTS5 查询构造、向量排序、RRF、`embed_sig`、prompt
 - RAG 管线：自定义 Embedding client、FTS5/向量仓储、索引状态机与断点续跑、单书/书库混合检索
-- P1 检索优化：追问查询改写、parent-child small-to-big、复用现有 Provider 的 LLM rerank
+- P1 检索优化：追问查询改写、parent-child small-to-big、原生 `/rerank`（复用向量模型 Base URL/Key，`rerank_model` 留空禁用）
 - Agent：OpenAI 兼容 LLM client、9 个工具、预检索证据、引用校验、工具并行执行（并发 3）、流式降级
 - Memory v2：migration v3、ADD/UPDATE/SUPERSEDE/NOOP 写入合并、分层读取与使用统计
-- P1-6 评测：3 本合成样书 × 10 题，真实 Embedding/Chat 检索与 Agent 评测，输出 Markdown/JSON 报告
+- P1-6 评测：3 本合成样书 × 10 题，真实 Embedding/Chat/Rerank 检索与 Agent 评测，输出 Markdown/JSON 报告
 - SQLite schema、顺序 migration、op-sqlite 适配层、备份 ZIP 格式
-- Vitest 单测 218 个
+- Vitest 单测 226 个
 
-真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、P1-5 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
+真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、设置页 UI、P1-5 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
 
 ## 常用命令
 
@@ -36,6 +36,7 @@ npx expo run:android --device
 ```bash
 cp .env.eval.example .env.eval.local
 # 填入 OpenAI 兼容的 chat/embedding 配置
+# EVAL_RERANK_MODEL 可选，复用 Embedding Base URL/Key；留空不启用
 ```
 
 报告写入 `evals/reports/latest.md` 与 `latest.json`（均不提交）。密钥只保存在本地 env 文件，不会进入代码或报告。

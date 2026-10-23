@@ -1,7 +1,10 @@
+import { createRequestSignal, type FetchLike } from '../http';
+import { normalizeBaseUrl } from '../embedding/signature';
 import type { RetrievalHit } from '../types';
 
 export const DEFAULT_RERANK_CANDIDATES = 20;
 export const DEFAULT_RERANK_TEXT_CHARS = 400;
+export const DEFAULT_NATIVE_RERANK_DOC_CHARS = 800;
 
 export interface RerankLlm {
   complete(
@@ -14,6 +17,162 @@ export type RerankFunction = (
   query: string,
   hits: readonly RetrievalHit[],
 ) => Promise<RetrievalHit[]>;
+
+export interface NativeRerankConfig {
+  /** 复用 Embedding 配置 */
+  baseUrl: string;
+  apiKey: string;
+  /** 如 BAAI/bge-reranker-v2-m3；留空表示不启用 */
+  model: string;
+  timeoutMs?: number;
+}
+
+export interface NativeRerankOptions {
+  fetchImpl?: FetchLike;
+  signal?: AbortSignal;
+  topN?: number;
+  maxDocumentChars?: number;
+}
+
+export interface NativeRerankItem {
+  index: number;
+  score: number;
+}
+
+export class RerankRequestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status = 0) {
+    super(message);
+    this.name = 'RerankRequestError';
+    this.status = status;
+  }
+}
+
+/**
+ * 调用与 Embedding 同一 Base URL/API Key 的 /rerank 端点。
+ * 请求/响应格式兼容 SiliconFlow、Jina 等常见 rerank API。
+ */
+export async function rerankDocuments(
+  config: NativeRerankConfig,
+  query: string,
+  documents: readonly string[],
+  options: Omit<NativeRerankOptions, 'maxDocumentChars'> = {},
+): Promise<NativeRerankItem[]> {
+  if (documents.length === 0) return [];
+
+  const baseUrl = normalizeBaseUrl(config.baseUrl);
+  if (!baseUrl) throw new RerankRequestError('Rerank Base URL 不能为空');
+  if (!config.apiKey.trim()) throw new RerankRequestError('Rerank API Key 不能为空');
+  if (!config.model.trim()) throw new RerankRequestError('Rerank 模型不能为空');
+
+  const topN = Math.max(1, Math.min(options.topN ?? documents.length, documents.length));
+  const requestSignal = createRequestSignal(config.timeoutMs ?? 30000, options.signal);
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  try {
+    const response = await fetchImpl(`${baseUrl}/rerank`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        query,
+        documents: [...documents],
+        top_n: topN,
+      }),
+      signal: requestSignal.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      const detail =
+        (body as { error?: { message?: string }; message?: string } | null)?.error
+          ?.message ||
+        (body as { message?: string } | null)?.message ||
+        '';
+      throw new RerankRequestError(
+        `Rerank API 失败: ${response.status}${detail ? ` - ${detail}` : ''}`,
+        response.status,
+      );
+    }
+
+    const data = (await response.json()) as {
+      results?: Array<{ index?: number; relevance_score?: number }>;
+    };
+    if (!Array.isArray(data.results)) {
+      throw new RerankRequestError('Rerank 响应缺少 results');
+    }
+
+    const items: NativeRerankItem[] = [];
+    const seen = new Set<number>();
+    for (const item of data.results) {
+      const index = Number(item.index);
+      const score = Number(item.relevance_score);
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= documents.length ||
+        seen.has(index)
+      ) {
+        continue;
+      }
+      seen.add(index);
+      items.push({ index, score: Number.isFinite(score) ? score : 0 });
+    }
+
+    if (items.length === 0) throw new RerankRequestError('Rerank 返回空结果');
+    return items.sort((a, b) => b.score - a.score);
+  } finally {
+    requestSignal.cleanup();
+  }
+}
+
+/**
+ * 原生 reranker：留空模型返回 null（不启用）。
+ * 任何网络/解析失败都回退原顺序，不影响检索主流程。
+ */
+export function createNativeReranker(
+  config: NativeRerankConfig,
+  options: Omit<NativeRerankOptions, 'topN' | 'signal'> & {
+    topN?: number;
+  } = {},
+): RerankFunction | null {
+  if (!config.model.trim()) return null;
+
+  return async (query, hits) => {
+    if (hits.length <= 1) return [...hits];
+
+    const maxDocumentChars =
+      options.maxDocumentChars ?? DEFAULT_NATIVE_RERANK_DOC_CHARS;
+    const documents = hits.map((hit) =>
+      (hit.text ?? '').trim().slice(0, maxDocumentChars),
+    );
+
+    try {
+      const ranked = await rerankDocuments(config, query, documents, {
+        fetchImpl: options.fetchImpl,
+        topN: options.topN ?? hits.length,
+      });
+      const seen = new Set<number>();
+      const reordered: RetrievalHit[] = [];
+      for (const item of ranked) {
+        const hit = hits[item.index];
+        if (!hit || seen.has(item.index)) continue;
+        seen.add(item.index);
+        reordered.push(hit);
+      }
+      for (let index = 0; index < hits.length; index++) {
+        if (!seen.has(index)) reordered.push(hits[index]);
+      }
+      return reordered;
+    } catch {
+      return [...hits];
+    }
+  };
+}
 
 export function buildRerankPrompt(
   query: string,

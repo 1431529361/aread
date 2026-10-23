@@ -5,7 +5,7 @@ import { createTestDb, insertBook } from '../__tests__/helpers/testDb';
 import { LOCAL_USER_ID } from '../src/db/schema';
 import { indexBook } from '../src/services/indexing';
 import { retrieveInBook, retrieveInLibrary } from '../src/services/retrieval';
-import { createLlmReranker } from '../src/core/rag/rerank';
+import { createNativeReranker } from '../src/core/rag/rerank';
 import { embedTexts, type EmbeddingClientConfig } from '../src/core/embedding/client';
 import { computeEmbedSig } from '../src/core/embedding/signature';
 import {
@@ -192,7 +192,7 @@ function isRefusalAnswer(text: string): boolean {
 
 function buildReportMarkdown(report: {
   generatedAt: string;
-  models: { chat: string; embed: string };
+  models: { chat: string; embed: string; rerank?: string | null };
   index: Array<{
     title: string;
     status: string;
@@ -223,6 +223,7 @@ function buildReportMarkdown(report: {
 - 生成时间：${report.generatedAt}
 - Chat 模型：${report.models.chat}
 - Embedding 模型：${report.models.embed}
+- Rerank 模型：${report.models.rerank || '未启用'}
 
 ## 索引
 
@@ -289,7 +290,11 @@ describe('P1-6 evaluation', () => {
         stream: (config: LlmClientConfig, options: Parameters<typeof stream>[1]) =>
           stream(config, { ...options, extraBody }),
       };
-      const reranker = createLlmReranker({ llm: chatLlm });
+      const reranker = createNativeReranker({
+        baseUrl: env.embedBaseUrl,
+        apiKey: env.embedApiKey,
+        model: env.rerankModel ?? '',
+      });
       const embedAll = (texts: readonly string[]) =>
         embedTexts(embedConfig, [...texts], {
           retries: 2,
@@ -762,11 +767,13 @@ describe('P1-6 evaluation', () => {
           models: {
             chat: env.chatModel,
             embed: env.embedModel,
+            rerank: env.rerankModel,
           },
           config: {
             chatBaseUrl: env.chatBaseUrl,
             embedBaseUrl: env.embedBaseUrl,
             embedDims: env.embedDims,
+            rerankModel: env.rerankModel,
             dataset: `${EVAL_BOOKS.length} books x ${EVAL_QUESTIONS.length} questions`,
             agentQuestions: agentQuestions.length,
           },
