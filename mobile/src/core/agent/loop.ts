@@ -30,7 +30,12 @@ export interface AgentLlmAdapter {
 const DEFAULT_LLM: AgentLlmAdapter = { chat: llmChat, stream: llmStream };
 
 export type AgentTrace =
-  | { iteration: 0; type: 'pre_retrieval'; evidence: Evidence[] }
+  | {
+      iteration: 0;
+      type: 'pre_retrieval';
+      evidence: Evidence[];
+      query?: string;
+    }
   | { iteration: number; type: 'thought'; content: string }
   | {
       iteration: number;
@@ -44,7 +49,7 @@ export type AgentTrace =
 
 export type AgentEvent =
   | { type: 'start'; model: string; tools: string[] }
-  | { type: 'pre_retrieval'; evidence: Evidence[] }
+  | { type: 'pre_retrieval'; evidence: Evidence[]; query?: string }
   | { type: 'fallback'; reason: string }
   | { type: 'thought'; content: string; iteration: number }
   | {
@@ -84,6 +89,11 @@ export interface AgentRunOptions {
   tools?: readonly AgentTool[];
   /** 预检索与 searchInBook 共用的检索函数 */
   retrieve?: (query: string) => Promise<RetrievalHit[]>;
+  /** 可选：用最近对话把追问改写成独立检索问题 */
+  rewriteQuery?: (input: {
+    question: string;
+    messages: readonly ChatMessage[];
+  }) => Promise<string>;
   llm?: AgentLlmAdapter;
   onEvent?: (event: AgentEvent) => void;
   maxIterations?: number;
@@ -168,9 +178,21 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
 
   let evidence: Evidence[] = [];
   if (options.retrieve) {
+    let retrievalQuery = buildRetrievalQuery(messages, question);
+    if (options.rewriteQuery) {
+      try {
+        const rewritten = (await options.rewriteQuery({
+          question,
+          messages,
+        })).trim();
+        if (rewritten) retrievalQuery = rewritten;
+      } catch {
+        // 改写失败时使用原始上下文查询
+      }
+    }
+
     try {
-      const query = buildRetrievalQuery(messages, question);
-      const hits = await options.retrieve(query);
+      const hits = await options.retrieve(retrievalQuery);
       evidence = buildEvidenceBlocks(hits, {
         maxChars: options.evidenceMaxChars,
         maxItems: options.evidenceMaxItems,
@@ -178,8 +200,13 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
     } catch {
       evidence = [];
     }
-    onEvent({ type: 'pre_retrieval', evidence });
-    trace.push({ iteration: 0, type: 'pre_retrieval', evidence });
+    onEvent({ type: 'pre_retrieval', evidence, query: retrievalQuery });
+    trace.push({
+      iteration: 0,
+      type: 'pre_retrieval',
+      evidence,
+      query: retrievalQuery,
+    });
   }
 
   const validIds = evidenceIds(evidence);

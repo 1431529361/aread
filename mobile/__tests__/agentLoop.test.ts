@@ -236,4 +236,34 @@ describe('runAgentLoop', () => {
 
     expect(capturedQuery).toBe('第一问\n第二问');
   });
+
+  it('配置查询改写后，预检索使用改写结果', async () => {
+    let capturedQuery = '';
+    const messages: ChatMessage[] = [
+      { role: 'system', content: '系统提示' },
+      { role: 'user', content: '福贵为什么离开家乡？' },
+      { role: 'assistant', content: '因为被抓壮丁。' },
+      { role: 'user', content: '他后来怎么样了？' },
+    ];
+    const { adapter } = makeAdapter([stop('ok')]);
+    const events: AgentEvent[] = [];
+
+    await runAgentLoop({
+      config,
+      messages,
+      question: '他后来怎么样了？',
+      context,
+      rewriteQuery: async () => '福贵后来怎么样了？',
+      retrieve: async (query) => {
+        capturedQuery = query;
+        return [];
+      },
+      llm: adapter,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(capturedQuery).toBe('福贵后来怎么样了？');
+    const preRetrieval = events.find((event) => event.type === 'pre_retrieval');
+    expect(preRetrieval).toMatchObject({ query: '福贵后来怎么样了？' });
+  });
 });
