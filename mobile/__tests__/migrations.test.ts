@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { DbAdapter, DbExecutor, DbValue } from '../src/db/adapter';
 import { runMigrations } from '../src/db/migrations';
+import { LATEST_SCHEMA_VERSION } from '../src/db/schema';
 
 function createTestAdapter(raw: DatabaseSync): DbAdapter {
   const executor: DbExecutor = {
@@ -46,7 +47,7 @@ describe('runMigrations', () => {
     const db = createTestAdapter(raw);
 
     const version = await runMigrations(db);
-    expect(version).toBe(1);
+    expect(version).toBe(LATEST_SCHEMA_VERSION);
 
     const tables = new Set(
       (
@@ -109,7 +110,18 @@ describe('runMigrations', () => {
     const userVersion = raw.prepare('PRAGMA user_version').get() as {
       user_version: number;
     };
-    expect(userVersion.user_version).toBe(1);
+    expect(userVersion.user_version).toBe(LATEST_SCHEMA_VERSION);
+
+    const vectorPk = (
+      raw.prepare('PRAGMA table_info(rag_vectors)').all() as Array<{
+        name: string;
+        pk: number;
+      }>
+    )
+      .filter((column) => column.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map((column) => column.name);
+    expect(vectorPk).toEqual(['chunk_id', 'embed_sig']);
 
     const user = raw.prepare('SELECT id FROM users').get() as { id: string };
     expect(user.id).toBe('local');
@@ -138,7 +150,7 @@ describe('runMigrations', () => {
       user_version: number;
     };
     const count = raw.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number };
-    expect(userVersion.user_version).toBe(1);
+    expect(userVersion.user_version).toBe(LATEST_SCHEMA_VERSION);
     expect(count.c).toBe(1);
 
     db.close();

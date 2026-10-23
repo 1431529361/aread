@@ -150,16 +150,18 @@
 
 **步骤**
 - [ ] Spike：在真机验证 op-sqlite 的 FTS5 可用（`CREATE VIRTUAL TABLE` + `MATCH`），记录 SQLite 版本。
-- [ ] 复用 `tokenize()`（单字 + bigram），入库时写入空格分隔的 tokens。
-- [ ] 查询构造器：token 之间用 OR，转义双引号、`*`、`-` 等 FTS 特殊字符，使用参数绑定。
-- [ ] 用 FTS5 `bm25()` 排序替代内存 `BM25Index`，删除缓存逻辑。
-- [ ] 向量写入前归一化，float32 BLOB；检索用点积。
-- [ ] 单书检索：FTS Top-20 + 该书向量 Top-20 → RRF Top-5。
-- [ ] 书库检索：FTS Top-200 → 按书分组加载候选向量 → 精排 → RRF。
-- [ ] 索引状态机：`pending → chunking → lexical_ready → embedding → ready/partial`。
-- [ ] 每批 10 条 embedding，失败块单独标记；重试只补失败块；应用被杀后从 `index_jobs` 恢复。
-- [ ] 换 embedding 模型时写入新 model 版本，旧向量保留至该书重建完成。
-- [ ] 在 `lexical_ready` 状态即可阅读和 BM25 检索。
+- [x] 复用 `tokenize()`（单字 + bigram），入库时写入空格分隔的 tokens。
+- [x] 查询构造器：token 之间用 OR，转义双引号、`*`、`-` 等 FTS 特殊字符，使用参数绑定。
+- [x] 用 FTS5 `bm25()` 排序替代内存 `BM25Index`，删除缓存逻辑。
+- [x] 向量写入前归一化，float32 BLOB；检索用点积。
+- [x] 单书检索：FTS Top-20 + 该书向量 Top-20 → RRF Top-5。
+- [x] 书库检索：FTS Top-200 → 按书分组加载候选向量 → 精排 → RRF。
+- [x] 索引状态机：`pending → chunking → lexical_ready → embedding → ready/partial`。
+- [x] 每批 10 条 embedding，失败块单独标记；重试只补失败块；应用被杀后从 `index_jobs` 恢复。
+  - 失败块以“缺少当前 sig 向量”表示；续跑走 `indexBook({ mode: 'embedding' })`。启动时自动调用待 M0-B 接线。
+- [x] 换 embedding 模型时写入新 model 版本，旧向量保留至该书重建完成。
+  - migration v2 将 `rag_vectors` 主键改为 `(chunk_id, embed_sig)`，新旧向量可并存；成功后才清理旧 sig。
+- [x] 在 `lexical_ready` 状态即可阅读和 BM25 检索。
 
 **性能目标（中端真机）**
 - 单书检索 p95 < 100ms（约 750 块）。
@@ -176,6 +178,8 @@
 **风险**
 - op-sqlite 若未内置 FTS5：退化为 SQLite 倒排表 + JS BM25（持久化 tf/df），不要退回内存重建。
 - FTS5 查询语法错误会导致整次检索失败：必须先单测转义逻辑。
+
+> 当前状态（2026-10-23）：`mobile/src/services/indexing.ts`、`retrieval.ts`、`db/repositories/{chunks,vectors}.ts`、`core/embedding/client.ts` 已完成；113 项单测覆盖 FTS 检索、按书分区、RRF、partial 续跑与换模型回滚。真机 FTS5 spike、性能目标与 FTS5 不可用回退方案仍待 M0-B 验证。
 
 ---
 

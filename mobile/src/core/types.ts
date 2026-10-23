@@ -40,6 +40,7 @@ export interface Evidence {
 export interface ChunkRecord {
   id: number;
   bookId: string;
+  bookTitle?: string;
   chunkIndex: number;
   chapter: string;
   text: string;

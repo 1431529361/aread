@@ -15,6 +15,25 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 1,
     statements: [...SCHEMA_STATEMENTS, ...SEED_STATEMENTS],
   },
+  {
+    version: 2,
+    statements: [
+      // 允许同一 chunk 同时保留旧/新 embed_sig 向量：重建失败时旧向量仍可检索
+      `CREATE TABLE rag_vectors_v2 (
+        chunk_id INTEGER NOT NULL REFERENCES rag_chunks(id) ON DELETE CASCADE,
+        book_id TEXT NOT NULL,
+        embed_sig TEXT NOT NULL,
+        dims INTEGER NOT NULL DEFAULT 1024,
+        vector BLOB NOT NULL,
+        PRIMARY KEY (chunk_id, embed_sig)
+      )`,
+      `INSERT INTO rag_vectors_v2 (chunk_id, book_id, embed_sig, dims, vector)
+        SELECT chunk_id, book_id, embed_sig, dims, vector FROM rag_vectors`,
+      `DROP TABLE rag_vectors`,
+      `ALTER TABLE rag_vectors_v2 RENAME TO rag_vectors`,
+      `CREATE INDEX IF NOT EXISTS idx_rag_vectors_book_sig ON rag_vectors(book_id, embed_sig)`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

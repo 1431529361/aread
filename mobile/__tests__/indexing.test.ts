@@ -1,0 +1,212 @@
+import { describe, expect, it } from 'vitest';
+import type { ChunkResult } from '../src/core/rag/chunk';
+import { LOCAL_USER_ID } from '../src/db/schema';
+import {
+  IndexingCancelledError,
+  getBookIndexStatus,
+  indexBook,
+} from '../src/services/indexing';
+import { queryFts } from '../src/db/repositories/chunks';
+import { countVectorsForBookSig } from '../src/db/repositories/vectors';
+import { createTestDb, insertBook } from './helpers/testDb';
+
+function makeChunks(count: number): ChunkResult[] {
+  return Array.from({ length: count }, (_, index) => ({
+    index,
+    chapter: `第${index + 1}章`,
+    text: `第${index + 1}块内容：自由与阅读 ${'补充内容'.repeat(10)}`,
+    loc_kind: 'txt' as const,
+    loc_href: null,
+    loc_start: index * 100,
+    loc_end: index * 100 + 60,
+  }));
+}
+
+function vectorFor(text: string): number[] {
+  const vector = new Array(1024).fill(0);
+  vector[0] = 1;
+  vector[1] = (text.length % 7) / 7;
+  return vector;
+}
+
+function embedWithSig(
+  sig: string,
+  behavior: { failOnCall?: number; abort?: () => void } = {},
+) {
+  let calls = 0;
+  return {
+    embedSig: sig,
+    dims: 1024,
+    embedTexts: async (texts: readonly string[]) => {
+      calls++;
+      if (behavior.failOnCall === calls) throw new Error('模拟 embedding 失败');
+      behavior.abort?.();
+      return texts.map(vectorFor);
+    },
+    calls: () => calls,
+  };
+}
+
+async function readMeta(db: Awaited<ReturnType<typeof createTestDb>>['db'], bookId: string) {
+  return db.queryOne<{
+    index_status: string;
+    index_progress: number;
+    embed_sig: string | null;
+    embed_dims: number | null;
+  }>('SELECT index_status, index_progress, embed_sig, embed_dims FROM books_meta WHERE id = ?', [
+    bookId,
+  ]);
+}
+
+describe('indexBook', () => {
+  it('无 embedding 时完成 lexical_ready，FTS 可检索', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    const result = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      content: '占位全文',
+      chunks: makeChunks(3),
+    });
+
+    expect(result).toMatchObject({ status: 'lexical_ready', chunks: 3, failed: 0 });
+    const hits = await queryFts(db, { bookId: 'b1', query: '自由', limit: 10 });
+    expect(hits).toHaveLength(3);
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'none' })).toBe(0);
+
+    const status = await getBookIndexStatus(db, { bookId: 'b1', userId: LOCAL_USER_ID });
+    expect(status.status).toBe('lexical_ready');
+    expect(status.progress).toBeCloseTo(0.5);
+    close();
+  });
+
+  it('full + embedding 完成后状态 ready，写入向量并清理旧 sig', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    const first = embedWithSig('sig-a');
+    const result = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      chunks: makeChunks(3),
+      embed: first,
+    });
+
+    expect(result).toMatchObject({ status: 'ready', chunks: 3, embedded: 3, failed: 0 });
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(3);
+
+    let meta = await readMeta(db, 'b1');
+    expect(meta).toMatchObject({ index_status: 'ready', embed_sig: 'sig-a', embed_dims: 1024 });
+
+    const second = embedWithSig('sig-b');
+    const switched = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      mode: 'embedding',
+      embed: second,
+    });
+
+    expect(switched.status).toBe('ready');
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-b' })).toBe(3);
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(0);
+    meta = await readMeta(db, 'b1');
+    expect(meta?.embed_sig).toBe('sig-b');
+    close();
+  });
+
+  it('embedding 部分失败时标记 partial，可只补失败块续跑', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    const failing = embedWithSig('sig-a', { failOnCall: 2 });
+    const partial = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      chunks: makeChunks(25),
+      embed: failing,
+    });
+
+    expect(partial.status).toBe('partial');
+    expect(partial.failed).toBe(15);
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(10);
+
+    const status = await getBookIndexStatus(db, { bookId: 'b1', userId: LOCAL_USER_ID });
+    expect(status.status).toBe('partial');
+    expect(status.error).toContain('模拟 embedding 失败');
+
+    const hits = await queryFts(db, { bookId: 'b1', query: '自由', limit: 30 });
+    expect(hits).toHaveLength(25);
+
+    const retry = embedWithSig('sig-a');
+    const resumed = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      mode: 'embedding',
+      embed: retry,
+    });
+
+    expect(resumed.status).toBe('ready');
+    expect(retry.calls()).toBe(2);
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(25);
+    close();
+  });
+
+  it('换模型失败时保留旧 sig 向量和 books_meta 的 active sig', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      chunks: makeChunks(3),
+      embed: embedWithSig('sig-a'),
+    });
+
+    const failing = embedWithSig('sig-b', { failOnCall: 1 });
+    const result = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      mode: 'embedding',
+      embed: failing,
+    });
+
+    expect(result.status).toBe('partial');
+    const meta = await readMeta(db, 'b1');
+    expect(meta?.embed_sig).toBe('sig-a');
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(3);
+    close();
+  });
+
+  it('取消索引后保留已完成部分并标记 partial', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    const controller = new AbortController();
+    const embed = embedWithSig('sig-a', { abort: () => controller.abort() });
+
+    await expect(
+      indexBook({
+        db,
+        userId: LOCAL_USER_ID,
+        bookId: 'b1',
+        chunks: makeChunks(25),
+        embed,
+        signal: controller.signal,
+      }),
+    ).rejects.toBeInstanceOf(IndexingCancelledError);
+
+    expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(10);
+    const status = await getBookIndexStatus(db, { bookId: 'b1', userId: LOCAL_USER_ID });
+    expect(status.status).toBe('partial');
+    expect(status.error).toContain('取消');
+    close();
+  });
+});
