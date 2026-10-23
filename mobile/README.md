@@ -5,14 +5,16 @@
 
 ## 当前进度
 
-**M0-A 已完成（纯逻辑，不依赖模拟器/真机）**
+**M0-A + P0 离线优化已完成（不依赖模拟器/真机）**
 
-- 核心纯逻辑：分词、分块 + locator、FTS5 查询构造、向量排序、RRF、记忆去重、`embed_sig`、prompt
-- SQLite schema、顺序 migration、op-sqlite 适配层
-- 备份 ZIP 的 manifest 定义与导入/导出纯逻辑（JSZip）
-- Vitest 单测 74 个
+- 核心纯逻辑：分词、分块 + locator、FTS5 查询构造、向量排序、RRF、`embed_sig`、prompt
+- RAG 管线：自定义 Embedding client、FTS5/向量仓储、索引状态机与断点续跑、单书/书库混合检索
+- Agent：OpenAI 兼容 LLM client、三个基础工具、预检索证据、引用校验、流式降级
+- Memory v2：migration v3、ADD/UPDATE/SUPERSEDE/NOOP 写入合并、分层读取与使用统计
+- SQLite schema、顺序 migration、op-sqlite 适配层、备份 ZIP 格式
+- Vitest 单测 173 个
 
-M0-B 起需要 Android 设备或模拟器验证原生模块与流式输出；Expo Go 不可用，必须使用 dev build。
+真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、P1 优化与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
 
 ## 常用命令
 
@@ -28,9 +30,9 @@ npx expo run:android --device
 
 ```
 app/                  # expo-router 页面（当前仅占位入口）
-src/core/             # 纯逻辑：rag / llm prompts / conversation / embedding
-src/db/               # schema、migrations、op-sqlite 适配器
+src/core/             # rag / llm / agent / conversation / embedding 纯逻辑
+src/db/               # schema、migrations、op-sqlite 适配器、repositories
 src/reader/           # locator
-src/services/         # backup
+src/services/         # indexing、retrieval、memory、backup
 __tests__/            # Vitest 单测
 ```

@@ -31,9 +31,13 @@
 | P2-2 | Procedural memory / 提示词优化 | memory | 2 天 | P0-4 | v2 |
 | P2-3 | Agent trace 持久化与回放 | agent | 1 天 | P0-1 | v2 |
 
+> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1 待排期。
+
 ## 2. P0 任务详情
 
 ### S-1 Web 安全修复（先做，和移动端无关）
+
+> 按用户 2026-10-23 要求：本次不修改 Web 端，S-1 暂缓。
 
 **问题**
 - 日志打印 API Key 前缀：`server.js` 中多处 `console.log`（约 793 行）。
