@@ -1,4 +1,7 @@
+import { defaultSleep, type FetchLike } from '../http';
 import { EMBED_DIMS, normalizeBaseUrl } from './signature';
+
+export type { FetchLike } from '../http';
 
 export interface EmbeddingClientConfig {
   baseUrl: string;
@@ -8,8 +11,6 @@ export interface EmbeddingClientConfig {
   dimensionsParam?: number | null;
   dims?: number;
 }
-
-export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export class EmbeddingRequestError extends Error {
   readonly status: number;
@@ -35,8 +36,6 @@ export interface EmbedTextsOptions {
   retries?: number;
   timeoutMs?: number;
 }
-
-const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function buildError(message: string, status: number): EmbeddingRequestError {
   const fatal = status >= 400 && status < 500 && status !== 429;

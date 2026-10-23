@@ -29,6 +29,13 @@ describe('prompts', () => {
     expect(prompt).toContain('searchInBook');
   });
 
+  it('Agent prompt 要求书中具体内容先检索，不再禁止调用工具', () => {
+    const prompt = buildAgentSystemPrompt({ model: 'qwen-test', bookName: '活着' });
+    expect(prompt).toContain('必须先使用检索证据或调用工具查阅原文');
+    expect(prompt).not.toContain('绝对不要调用工具');
+    expect(prompt).toContain('[C1]');
+  });
+
   it('Agent user message 在无选中文本时附上书名', () => {
     expect(buildAgentUserMessage({ question: '讲了什么', bookName: '活着' })).toBe(
       '问题：讲了什么\n（关于《活着》）',
