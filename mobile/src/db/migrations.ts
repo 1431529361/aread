@@ -4,6 +4,7 @@ import {
   SCHEMA_STATEMENTS,
   SEED_STATEMENTS,
 } from './schema';
+import { isFts5Available } from './fts5';
 
 export interface Migration {
   version: number;
@@ -94,6 +95,21 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE provider_config ADD COLUMN context_window INTEGER NOT NULL DEFAULT 200000`,
     ],
   },
+  {
+    version: 7,
+    statements: [
+      // M0-B：阅读位置、助手消息引用快照
+      `ALTER TABLE books_meta ADD COLUMN last_locator TEXT`,
+      `ALTER TABLE messages ADD COLUMN citations TEXT`,
+      // FTS5 不可用时的降级索引（M0-B 设备能力验证的兜底路径）
+      `CREATE TABLE IF NOT EXISTS rag_lexical (
+        chunk_id INTEGER PRIMARY KEY REFERENCES rag_chunks(id) ON DELETE CASCADE,
+        book_id TEXT NOT NULL,
+        tokens TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_rag_lexical_book ON rag_lexical(book_id)`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {
@@ -118,6 +134,18 @@ export async function runMigrations(db: DbAdapter): Promise<number> {
 
     await db.transaction(async (tx) => {
       for (const statement of migration.statements) {
+        // FTS5 不可用时不创建虚拟表，留一个同名的普通表占位，
+        // 词法检索统一走 rag_lexical + JS BM25。
+        if (!isFts5Available() && /CREATE\s+VIRTUAL\s+TABLE[^;]*rag_fts/i.test(statement)) {
+          await tx.execute(
+            `CREATE TABLE IF NOT EXISTS rag_fts (
+               chunk_id INTEGER,
+               book_id TEXT,
+               tokens TEXT
+             )`,
+          );
+          continue;
+        }
         await tx.execute(statement);
       }
       await tx.execute(`PRAGMA user_version = ${Math.floor(migration.version)}`);

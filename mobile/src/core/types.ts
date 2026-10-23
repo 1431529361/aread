@@ -17,6 +17,15 @@ export interface LocatorRow {
 
 export type BookFormat = 'txt' | 'epub';
 
+/** 索引状态机的持久化状态（见 services/indexing.ts）。 */
+export type IndexStatus =
+  | 'pending'
+  | 'chunking'
+  | 'lexical_ready'
+  | 'embedding'
+  | 'ready'
+  | 'partial';
+
 export type RetrievalSource = 'fts' | 'vector';
 
 /** 检索命中的原文片段，携带可跳转 locator。 */

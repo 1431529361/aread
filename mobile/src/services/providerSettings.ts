@@ -1,6 +1,7 @@
 import type { ProviderConfigRecord } from '../db/repositories/providers';
 import type { EmbeddingClientConfig } from '../core/embedding/client';
 import type { LlmClientConfig } from '../core/llm/client';
+import type { FetchLike } from '../core/http';
 import { createNativeReranker, type RerankFunction } from '../core/rag/rerank';
 import { DEFAULT_CONTEXT_WINDOW } from '../core/context/tokens';
 
@@ -47,13 +48,17 @@ export function buildEmbeddingConfig(
 export function buildReranker(
   record: ProviderConfigRecord,
   embeddingApiKey: string,
+  options: { fetchImpl?: FetchLike } = {},
 ): RerankFunction | null {
   if (record.kind !== 'embedding') return null;
   if (!record.rerankModel?.trim() || !embeddingApiKey.trim()) return null;
 
-  return createNativeReranker({
-    baseUrl: record.baseUrl,
-    apiKey: embeddingApiKey,
-    model: record.rerankModel,
-  });
+  return createNativeReranker(
+    {
+      baseUrl: record.baseUrl,
+      apiKey: embeddingApiKey,
+      model: record.rerankModel,
+    },
+    { fetchImpl: options.fetchImpl },
+  );
 }
