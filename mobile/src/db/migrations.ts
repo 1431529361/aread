@@ -47,6 +47,13 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_mem_user_layer ON user_memories(user_id, layer, status)`,
     ],
   },
+  {
+    version: 4,
+    statements: [
+      `ALTER TABLE rag_chunks ADD COLUMN parent_index INTEGER`,
+      `CREATE INDEX IF NOT EXISTS idx_rag_chunks_book_parent ON rag_chunks(book_id, parent_index)`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

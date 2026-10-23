@@ -31,7 +31,7 @@
 | P2-2 | Procedural memory / 提示词优化 | memory | 2 天 | P0-4 | v2 |
 | P2-3 | Agent trace 持久化与回放 | agent | 1 天 | P0-1 | v2 |
 
-> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1 待排期。
+> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2 已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-3/4/5/6 待排期。
 
 ## 2. P0 任务详情
 
@@ -272,9 +272,13 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 > 当前状态（2026-10-23）：`core/rag/queryRewrite.ts` 与 Agent 预检索 hook 已完成；10 项单测覆盖指代、省略、跨书、失败回退。命中率对比依赖 P1-6 评测集，待 M3。
 
 ### P1-2 small-to-big 父子块
-- 子块 300~500 字用于检索，父块 1500~2000 字用于生成。
-- 命中子块后向上合并相邻块，去重后按 token 预算截断。
-- 验收：答案完整度提升，引用仍指向子块位置。
+- [x] 子块 300~500 字用于检索，父块 1500~2000 字用于生成。
+  - 默认父块 1800、子块 330；段落聚合最多放宽到 1.5 倍，扩写预算 1800。
+- [x] 命中子块后向上合并相邻块，去重后按 token 预算截断。
+  - `core/rag/parentChild.ts` + `services/parentExpansion.ts`；同一父块的多个子命中合并为一条，`childHits` 保留全部命中。
+- [ ] 验收：答案完整度提升，引用仍指向子块位置。
+
+> 当前状态（2026-10-23）：migration v4 增加 `rag_chunks.parent_index`；索引默认使用 parent-child 分块，检索开启 `expandParents` 即可返回父块文本；引用 locator 仍指向子块。单测覆盖父块合并、去重、预算截断与检索接入；答案完整度对比待 P1-6 评测集。
 
 ### P1-3 检索重排
 - 召回 Top-20 后接 bge-reranker 或同类 API，精排到 Top-5。

@@ -82,6 +82,29 @@ describe('indexBook', () => {
     close();
   });
 
+  it('未传 chunks 时默认使用 parent-child 分块', async () => {
+    const { db, close } = await createTestDb();
+    await insertBook(db, { id: 'b1', title: '书一' });
+
+    const content = '内容段落。'.repeat(700);
+    const result = await indexBook({
+      db,
+      userId: LOCAL_USER_ID,
+      bookId: 'b1',
+      content,
+    });
+
+    expect(result.status).toBe('lexical_ready');
+    const rows = await db.queryAll<{ parent_index: number | null }>(
+      'SELECT parent_index FROM rag_chunks WHERE book_id = ?',
+      ['b1'],
+    );
+    expect(rows.length).toBeGreaterThan(1);
+    expect(new Set(rows.map((row) => row.parent_index)).size).toBeGreaterThan(1);
+    expect(rows.every((row) => row.parent_index != null)).toBe(true);
+    close();
+  });
+
   it('full + embedding 完成后状态 ready，写入向量并清理旧 sig', async () => {
     const { db, close } = await createTestDb();
     await insertBook(db, { id: 'b1', title: '书一' });

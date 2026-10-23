@@ -1,5 +1,6 @@
 import type { DbAdapter } from '../db/adapter';
 import { chunkText, type ChunkResult } from '../core/rag/chunk';
+import { chunkParentChild } from '../core/rag/parentChild';
 import type { ChunkRecord } from '../core/types';
 import { EMBED_DIMS } from '../core/embedding/signature';
 import {
@@ -45,6 +46,8 @@ export interface IndexBookParams {
   content?: string;
   charCount?: number;
   chunks?: readonly ChunkResult[];
+  /** full 模式未传 chunks 时的分块策略，默认 parent-child */
+  strategy?: 'parent-child' | 'flat';
   /** full=重建词法索引；embedding=保留 chunks 只补/换向量 */
   mode?: 'full' | 'embedding';
   embed?: EmbedFunction | null;
@@ -196,10 +199,13 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
   let storedChunks: ChunkRecord[];
 
   if (mode === 'full') {
+    const strategy = params.strategy ?? 'parent-child';
     const sourceChunks =
       params.chunks ??
       (params.content != null
-        ? chunkText(params.content)
+        ? strategy === 'flat'
+          ? chunkText(params.content)
+          : chunkParentChild(params.content)
         : null);
     if (!sourceChunks) {
       throw new Error('full 模式需要 content 或 chunks');
@@ -231,6 +237,7 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
         start: chunk.loc_start,
         end: chunk.loc_end,
       },
+      parentIndex: chunk.parent_index ?? null,
     }));
     await writeLexicalIndex(db, { userId, bookId, chunks: newChunks });
     storedChunks = await loadChunksForBook(db, bookId);

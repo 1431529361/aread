@@ -8,6 +8,7 @@ export interface NewChunk {
   chapter: string;
   text: string;
   loc: Locator;
+  parentIndex?: number | null;
 }
 
 interface ChunkRow {
@@ -20,6 +21,7 @@ interface ChunkRow {
   loc_href: string | null;
   loc_start: number;
   loc_end: number;
+  parent_index: number | null;
   book_title?: string | null;
 }
 
@@ -46,6 +48,7 @@ function mapChunk(row: ChunkRow): ChunkRecord {
     chapter: row.chapter ?? '',
     text: row.text,
     loc: toLocator(row),
+    parentIndex: row.parent_index == null ? null : Number(row.parent_index),
   };
 }
 
@@ -68,8 +71,8 @@ export async function writeLexicalIndex(
     for (const chunk of chunks) {
       const result = await tx.execute(
         `INSERT INTO rag_chunks
-          (user_id, book_id, chunk_index, chapter, text, loc_kind, loc_href, loc_start, loc_end)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (user_id, book_id, chunk_index, chapter, text, loc_kind, loc_href, loc_start, loc_end, parent_index)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           userId,
           bookId,
@@ -80,6 +83,7 @@ export async function writeLexicalIndex(
           chunk.loc.href,
           chunk.loc.start,
           chunk.loc.end,
+          chunk.parentIndex ?? null,
         ],
       );
       const chunkId = result.lastInsertRowId;
@@ -134,6 +138,25 @@ export async function loadChunksForBook(
      WHERE c.book_id = ?
      ORDER BY c.chunk_index`,
     [bookId],
+  );
+  return rows.map(mapChunk);
+}
+
+export async function loadChunksByParents(
+  db: DbAdapter,
+  params: { bookId: string; parentIndices: readonly number[] },
+): Promise<ChunkRecord[]> {
+  const parents = [...new Set(params.parentIndices)];
+  if (parents.length === 0) return [];
+
+  const placeholders = parents.map(() => '?').join(',');
+  const rows = await db.queryAll<ChunkRow>(
+    `SELECT c.*, m.title AS book_title
+     FROM rag_chunks c
+     LEFT JOIN books_meta m ON m.id = c.book_id AND m.user_id = c.user_id
+     WHERE c.book_id = ? AND c.parent_index IN (${placeholders})
+     ORDER BY c.chunk_index`,
+    [params.bookId, ...parents],
   );
   return rows.map(mapChunk);
 }

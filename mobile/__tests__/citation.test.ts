@@ -67,6 +67,24 @@ describe('buildEvidenceBlocks', () => {
     );
     expect(evidence).toHaveLength(5);
   });
+
+  it('有 parentText 时优先使用父块内容，locator 仍指向子块', () => {
+    const evidence = buildEvidenceBlocks([
+      hit({
+        text: '子块原文',
+        parentText: '父块完整上下文：子块原文以及前后相邻段落。',
+        loc: { kind: 'txt', href: null, start: 200, end: 204 },
+      }),
+    ]);
+
+    expect(evidence[0].hit.text).toContain('父块完整上下文');
+    expect(evidence[0].hit.loc).toEqual({
+      kind: 'txt',
+      href: null,
+      start: 200,
+      end: 204,
+    });
+  });
 });
 
 describe('buildEvidenceMessage', () => {

@@ -27,8 +27,10 @@ export function buildEvidenceBlocks(
     const remaining = maxChars - used;
     if (remaining <= header.length + 20) break;
 
-    const textBudget = Math.min(hit.text.length, remaining - header.length);
-    const text = hit.text.slice(0, textBudget).trim();
+    const sourceText =
+      hit.parentText && hit.parentText.trim() ? hit.parentText : hit.text;
+    const textBudget = Math.min(sourceText.length, remaining - header.length);
+    const text = sourceText.slice(0, textBudget).trim();
     if (!text) continue;
 
     evidence.push({ citationId, hit: { ...hit, text } });

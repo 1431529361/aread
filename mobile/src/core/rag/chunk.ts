@@ -14,6 +14,8 @@ export interface ChunkResult {
   loc_href: string | null;
   loc_start: number;
   loc_end: number;
+  /** small-to-big：同一父块下的子块共享 parent_index */
+  parent_index?: number | null;
 }
 
 export interface ChunkTextOptions {

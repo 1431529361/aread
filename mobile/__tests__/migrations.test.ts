@@ -96,7 +96,7 @@ describe('runMigrations', () => {
         raw.prepare('PRAGMA table_info(rag_chunks)').all() as Array<{ name: string }>
       ).map((row) => row.name),
     );
-    for (const column of ['loc_kind', 'loc_href', 'loc_start', 'loc_end']) {
+    for (const column of ['loc_kind', 'loc_href', 'loc_start', 'loc_end', 'parent_index']) {
       expect(chunkColumns.has(column)).toBe(true);
     }
 

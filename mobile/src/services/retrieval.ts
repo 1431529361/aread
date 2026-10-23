@@ -5,6 +5,7 @@ import { rrfFuse } from '../core/rag/rrf';
 import { rankByDot } from '../core/rag/vector';
 import { EMBED_DIMS } from '../core/embedding/signature';
 import type { ChunkRecord, RetrievalHit, RetrievalSource } from '../core/types';
+import { expandRetrievalHits } from './parentExpansion';
 
 export type QueryEmbedder = (query: string) => Promise<ArrayLike<number>>;
 
@@ -18,6 +19,10 @@ export interface RetrievalOptions {
   /** 当前 active embed_sig；与向量表不匹配时跳过向量路 */
   activeSig?: string | null;
   dims?: number;
+  /** 检索后把子块扩展到父块（small-to-big） */
+  expandParents?: boolean;
+  parentMaxChars?: number;
+  parentMaxOverlap?: number;
 }
 
 export const RECALL_N = 20;
@@ -37,6 +42,7 @@ function toHit(
     loc: chunk.loc,
     score,
     sources,
+    parentIndex: chunk.parentIndex ?? null,
   };
 }
 
@@ -185,7 +191,13 @@ export async function retrieveInBook(
     }
   }
 
-  return fuse(fts, vectors, topK);
+  const fused = fuse(fts, vectors, topK);
+  return options.expandParents
+    ? expandRetrievalHits(options.db, fused, {
+        maxChars: options.parentMaxChars,
+        maxOverlap: options.parentMaxOverlap,
+      })
+    : fused;
 }
 
 /**
@@ -223,5 +235,11 @@ export async function retrieveInLibrary(
     }
   }
 
-  return fuse(fts, vectors, topK);
+  const fused = fuse(fts, vectors, topK);
+  return options.expandParents
+    ? expandRetrievalHits(options.db, fused, {
+        maxChars: options.parentMaxChars,
+        maxOverlap: options.parentMaxOverlap,
+      })
+    : fused;
 }

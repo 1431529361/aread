@@ -29,6 +29,12 @@ export interface RetrievalHit {
   loc: Locator;
   score: number;
   sources: RetrievalSource[];
+  /** small-to-big 父块；为空表示旧索引或未启用 */
+  parentIndex?: number | null;
+  /** 向上合并后的父块文本；text 仍保留命中的子块原文 */
+  parentText?: string;
+  /** 同一父块下的所有命中子块 */
+  childHits?: RetrievalHit[];
 }
 
 /** 注入给模型的证据块，citationId 对应答案中的 [Cn]。 */
@@ -45,4 +51,5 @@ export interface ChunkRecord {
   chapter: string;
   text: string;
   loc: Locator;
+  parentIndex?: number | null;
 }
