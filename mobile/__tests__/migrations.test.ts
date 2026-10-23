@@ -107,6 +107,26 @@ describe('runMigrations', () => {
     );
     expect(conversationColumns.has('scope')).toBe(true);
 
+    const memoryColumns = new Set(
+      (
+        raw.prepare('PRAGMA table_info(user_memories)').all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
+    );
+    for (const column of [
+      'layer',
+      'status',
+      'embedding',
+      'source_message_id',
+      'valid_from',
+      'superseded_by',
+      'last_used_at',
+      'use_count',
+    ]) {
+      expect(memoryColumns.has(column)).toBe(true);
+    }
+
     const userVersion = raw.prepare('PRAGMA user_version').get() as {
       user_version: number;
     };

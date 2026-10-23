@@ -34,6 +34,19 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_rag_vectors_book_sig ON rag_vectors(book_id, embed_sig)`,
     ],
   },
+  {
+    version: 3,
+    statements: [
+      `ALTER TABLE user_memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'profile'`,
+      `ALTER TABLE user_memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+      `ALTER TABLE user_memories ADD COLUMN source_message_id INTEGER`,
+      `ALTER TABLE user_memories ADD COLUMN valid_from TEXT`,
+      `ALTER TABLE user_memories ADD COLUMN superseded_by INTEGER`,
+      `ALTER TABLE user_memories ADD COLUMN last_used_at TEXT`,
+      `ALTER TABLE user_memories ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0`,
+      `CREATE INDEX IF NOT EXISTS idx_mem_user_layer ON user_memories(user_id, layer, status)`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

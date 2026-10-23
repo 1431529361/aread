@@ -4,6 +4,7 @@ import {
   normalizeVector,
   vectorToBytes,
 } from '../../core/rag/vector';
+import { asUint8Array } from '../binary';
 
 export interface VectorItem {
   chunkId: number;
@@ -13,15 +14,6 @@ export interface VectorItem {
 export interface LoadedVector {
   chunkId: number;
   vector: Float32Array;
-}
-
-function asBytes(value: unknown): Uint8Array {
-  if (value instanceof Uint8Array) return value;
-  if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-  throw new Error('rag_vectors.vector 不是二进制数据');
 }
 
 /** 写入/覆盖某 embed_sig 下的向量；同 chunk 的其他 sig 向量保留。 */
@@ -66,7 +58,7 @@ export async function upsertVectors(
 function mapVectors(rows: Array<{ chunk_id: number; vector: unknown }>): LoadedVector[] {
   return rows.map((row) => ({
     chunkId: row.chunk_id,
-    vector: bytesToVector(asBytes(row.vector)),
+    vector: bytesToVector(asUint8Array(row.vector)),
   }));
 }
 

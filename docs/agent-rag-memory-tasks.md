@@ -207,36 +207,42 @@ ALTER TABLE user_memories ADD COLUMN last_used_at TEXT;
 ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 ```
 
+> migration v3 已实现。`embedding` 列沿用既有 TEXT 亲和列存储 BLOB（SQLite 不会转换 BLOB 值），避免重建表。
+
 **写入管线**
-- [ ] 触发时机改为：会话空闲 5 分钟，或每 10 轮用户消息；不再每轮触发。
-- [ ] 抽取输出 JSON：`{ op, layer, content, evidence, confidence, salience }`。
-- [ ] 对每条候选，先召回最相似的 5 条已有记忆（有 embedding 用余弦，无则用 token 重叠）。
-- [ ] 让 LLM 判定 `ADD / UPDATE / SUPERSEDE / NOOP`，并给出目标记忆 ID。
-- [ ] 执行合并：UPDATE 覆盖内容并保留来源；SUPERSEDE 把旧记忆标记 `status='superseded'` 并写 `superseded_by`。
-- [ ] 记录 `source_conv`、`source_message_id`、`valid_from`。
-- [ ] 容量上限 200，淘汰按 `salience × 新近度 × use_count`，不只看 salience。
-- [ ] 记忆写入失败不影响对话主流程。
+- [x] 触发时机改为：会话空闲 5 分钟，或每 10 轮用户消息；不再每轮触发。
+- [x] 抽取输出 JSON：`{ op, layer, content, evidence, confidence, salience }`。
+  - 抽取阶段输出 layer/content/evidence/confidence/salience；op 由合并判定阶段给出。
+- [x] 对每条候选，先召回最相似的 5 条已有记忆（有 embedding 用余弦，无则用 token 重叠）。
+- [x] 让 LLM 判定 `ADD / UPDATE / SUPERSEDE / NOOP`，并给出目标记忆 ID。
+- [x] 执行合并：UPDATE 覆盖内容并保留来源；SUPERSEDE 把旧记忆标记 `status='superseded'` 并写 `superseded_by`。
+- [x] 记录 `source_conv`、`source_message_id`、`valid_from`。
+- [x] 容量上限 200，淘汰按 `salience × 新近度 × use_count`，不只看 salience。
+- [x] 记忆写入失败不影响对话主流程。
 
 **读取管线**
-- [ ] `profile` 层常驻注入，最多 8 条、总长 300 字。
-- [ ] `episodic` 层按相关性检索，设阈值，低于阈值不注入。
-- [ ] `procedural` 层只在生成笔记/人物分析等任务时注入。
-- [ ] 注入格式分节，并加明确指令：“仅在确实相关时使用，不要主动提及记忆本身”。
-- [ ] 记录本次注入了哪些记忆（`last_used_at`、`use_count`），便于后续评估。
+- [x] `profile` 层常驻注入，最多 8 条、总长 300 字。
+- [x] `episodic` 层按相关性检索，设阈值，低于阈值不注入。
+- [x] `procedural` 层只在生成笔记/人物分析等任务时注入。
+- [x] 注入格式分节，并加明确指令：“仅在确实相关时使用，不要主动提及记忆本身”。
+- [x] 记录本次注入了哪些记忆（`last_used_at`、`use_count`），便于后续评估。
 
 **阅读场景字段**
 - 阅读偏好：类型、作者、难度、节奏。
 - 阅读经历：读完/弃读、完成时间、高亮主题。
 - 互动偏好：答案长度、是否分点、是否要求引用原文。
+  - 当前由抽取提示词按 profile/episodic/procedural 通用描述，结构化字段与 UI 编辑待 M2。
 
 **界面**
 - [ ] 设置页记忆面板：按 profile / episodic / procedural 分组。
 - [ ] 每条显示内容、来源会话、创建时间、状态；支持编辑、置顶、删除。
 - [ ] 支持按类别关闭、全部清除、按书禁用。
+  - 仓储层已提供 update/delete/clear，UI 待 M2。
 
 **后台整理**
-- [ ] 会话结束时合并重复、失效旧事实、把长事件压缩为一句。
-- [ ] 整理任务可重入，失败不影响主流程。
+- [x] 会话结束时合并重复、失效旧事实、把长事件压缩为一句。
+  - 已实现确定性去重/失效与容量淘汰；LLM 压缩长事件待后续。
+- [x] 整理任务可重入，失败不影响主流程。
 
 **验收**
 - 同一偏好重复出现不会产生两条 active 记录。
@@ -247,6 +253,8 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 
 **测试场景（至少 20 条）**
 - 重复偏好、偏好反转、临时兴趣、一次性问题、书籍剧情（不应入库）、跨会话复用、按书禁用、无 Key 降级。
+
+> 当前状态（2026-10-23）：migration v3 + `db/repositories/memories.ts` + `services/memory.ts` + `core/conversation/memoryV2.ts` 已完成；记忆相关 29 项单测覆盖 ADD/UPDATE/SUPERSEDE/NOOP、触发门槛、相关性门控、容量淘汰、使用统计与整理。设置页 UI、按书禁用、结构化阅读字段与真实模型评测待 M2。
 
 ---
 
