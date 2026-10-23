@@ -58,6 +58,23 @@ describe('llm chat', () => {
     expect(response.choices[0].message.content).toBe('回答');
   });
 
+  it('透传供应商特有 extraBody 参数', async () => {
+    let body: Record<string, unknown> = {};
+    const fetchImpl: FetchLike = async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
+    };
+
+    await chat(config, {
+      messages,
+      fetchImpl,
+      extraBody: { enable_thinking: false },
+    });
+
+    expect(body.enable_thinking).toBe(false);
+    expect(body.model).toBe('test-model');
+  });
+
   it('带工具时发送 tools 与 tool_choice', async () => {
     let body: Record<string, unknown> = {};
     const fetchImpl: FetchLike = async (_url, init) => {

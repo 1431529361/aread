@@ -103,6 +103,8 @@ export interface ChatOptions {
   signal?: AbortSignal;
   fetchImpl?: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  /** 供应商特有参数（如 enable_thinking:false），不覆盖标准字段 */
+  extraBody?: Record<string, unknown>;
 }
 
 export async function chat(
@@ -111,6 +113,7 @@ export async function chat(
 ): Promise<ChatResponse> {
   const endpoint = endpointFor(config);
   const body: Record<string, unknown> = {
+    ...(options.extraBody ?? {}),
     model: config.model,
     messages: options.messages,
     temperature: options.temperature ?? 0.3,
@@ -204,6 +207,7 @@ export async function stream(
       method: 'POST',
       headers: headersFor(config),
       body: JSON.stringify({
+        ...(options.extraBody ?? {}),
         model: config.model,
         messages: options.messages,
         temperature: options.temperature ?? 0.4,
