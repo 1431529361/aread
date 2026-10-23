@@ -75,7 +75,7 @@ export const searchInBookTool: AgentTool = {
         loc: hit.loc,
         score: Number(hit.score.toFixed(4)),
         sources: hit.sources,
-        text: truncateText(hit.parentText ?? hit.text, 600),
+        text: truncateText(hit.parentText ?? hit.text, 500),
       })),
     };
   },

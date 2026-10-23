@@ -14,8 +14,14 @@ import {
   type ChatResponse,
   type LlmClientConfig,
   type StreamOptions,
+  type ToolCall,
 } from '../llm/client';
-import { DEFAULT_TOOLS, executeToolByName, getToolSchemas } from './registry';
+import {
+  DEFAULT_TOOLS,
+  executeToolByName,
+  getToolByName,
+  getToolSchemas,
+} from './registry';
 import {
   parseToolArguments,
   serializeToolResult,
@@ -114,6 +120,31 @@ export interface AgentRunResult {
 
 const MAX_ITERATIONS = 8;
 const MAX_TOOL_CALLS_PER_NAME = 5;
+const TOOL_CONCURRENCY = 3;
+
+async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (true) {
+        const index = next++;
+        if (index >= items.length) return;
+        results[index] = await fn(items[index], index);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return results;
+}
 
 function buildRetrievalQuery(
   messages: readonly ChatMessage[],
@@ -172,6 +203,7 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
   const toolContext: AgentToolContext = {
     ...context,
     retrieve: context.retrieve ?? options.retrieve,
+    signal,
   };
 
   onEvent({ type: 'start', model: config.model, tools: tools.map((tool) => tool.name) });
@@ -325,47 +357,33 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
       tool_calls: toolCalls,
     });
 
-    for (const toolCall of toolCalls) {
+    interface ToolCallPlan {
+      toolCall: ToolCall;
+      name: string;
+      callCount: number;
+      blocked: boolean;
+      args?: Record<string, unknown>;
+      argumentError?: string;
+    }
+
+    const plans: ToolCallPlan[] = toolCalls.map((toolCall) => {
       const name = toolCall.function.name;
       const callCount = (toolCallCounts.get(name) ?? 0) + 1;
       toolCallCounts.set(name, callCount);
 
       if (callCount > maxToolCalls) {
-        const result = {
-          error: `工具 ${name} 调用次数超过 ${maxToolCalls} 次，已熔断`,
-        };
-        onEvent({
-          type: 'tool_result',
-          id: toolCall.id,
-          name,
-          result,
-          iteration,
-          blocked: true,
-        });
-        working.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: serializeToolResult(result),
-        });
-        continue;
+        return { toolCall, name, callCount, blocked: true };
       }
 
       const parsed = parseToolArguments(toolCall.function.arguments);
       if (!parsed.ok) {
-        const result = { error: 'invalid_arguments', detail: parsed.detail };
-        onEvent({
-          type: 'tool_result',
-          id: toolCall.id,
+        return {
+          toolCall,
           name,
-          result,
-          iteration,
-        });
-        working.push({
-          role: 'tool',
-          tool_call_id: toolCall.id,
-          content: serializeToolResult(result),
-        });
-        continue;
+          callCount,
+          blocked: false,
+          argumentError: parsed.detail,
+        };
       }
 
       onEvent({
@@ -376,38 +394,88 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
         iteration,
         callCount,
       });
-
-      const startedAt = Date.now();
-      let result: unknown;
-      try {
-        result = await executeToolByName(tools, name, parsed.args, toolContext);
-      } catch (error) {
-        result = {
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      const elapsed = Date.now() - startedAt;
-
-      trace.push({
-        iteration,
-        type: 'tool',
+      return {
+        toolCall,
         name,
+        callCount,
+        blocked: false,
         args: parsed.args,
-        elapsed,
-        result,
-      });
+      };
+    });
+
+    const executable = plans.filter(
+      (plan) => !plan.blocked && !plan.argumentError && plan.args,
+    );
+
+    const executionResults = await runWithConcurrency(
+      executable,
+      TOOL_CONCURRENCY,
+      async (plan) => {
+        if (signal?.aborted) throw new Error('Agent 已取消');
+        const startedAt = Date.now();
+        let result: unknown;
+        try {
+          result = await executeToolByName(
+            tools,
+            plan.name,
+            plan.args!,
+            toolContext,
+          );
+        } catch (error) {
+          result = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+        return { result, elapsed: Date.now() - startedAt };
+      },
+    );
+
+    const executionByPlan = new Map(
+      executable.map((plan, index) => [plan, executionResults[index]] as const),
+    );
+
+    for (const plan of plans) {
+      let result: unknown;
+      let elapsed: number | undefined;
+
+      if (plan.blocked) {
+        result = {
+          error: `工具 ${plan.name} 调用次数超过 ${maxToolCalls} 次，已熔断`,
+        };
+      } else if (plan.argumentError) {
+        result = { error: 'invalid_arguments', detail: plan.argumentError };
+      } else {
+        const execution = executionByPlan.get(plan);
+        result = execution?.result;
+        elapsed = execution?.elapsed;
+      }
+
+      if (!plan.blocked && !plan.argumentError && plan.args) {
+        trace.push({
+          iteration,
+          type: 'tool',
+          name: plan.name,
+          args: plan.args,
+          elapsed: elapsed ?? 0,
+          result,
+        });
+      }
+
       onEvent({
         type: 'tool_result',
-        id: toolCall.id,
-        name,
+        id: plan.toolCall.id,
+        name: plan.name,
         result,
         elapsed,
         iteration,
+        blocked: plan.blocked || undefined,
       });
+
+      const tool = getToolByName(tools, plan.name);
       working.push({
         role: 'tool',
-        tool_call_id: toolCall.id,
-        content: serializeToolResult(result),
+        tool_call_id: plan.toolCall.id,
+        content: serializeToolResult(result, tool?.resultLimits),
       });
     }
   }

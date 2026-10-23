@@ -9,13 +9,13 @@
 
 - 核心纯逻辑：分词、分块 + locator、FTS5 查询构造、向量排序、RRF、`embed_sig`、prompt
 - RAG 管线：自定义 Embedding client、FTS5/向量仓储、索引状态机与断点续跑、单书/书库混合检索
-- P1 检索优化：追问查询改写、parent-child small-to-big（子块检索、父块生成）
-- Agent：OpenAI 兼容 LLM client、三个基础工具、预检索证据、引用校验、流式降级
+- P1 检索优化：追问查询改写、parent-child small-to-big、复用现有 Provider 的 LLM rerank
+- Agent：OpenAI 兼容 LLM client、9 个工具、预检索证据、引用校验、工具并行执行（并发 3）、流式降级
 - Memory v2：migration v3、ADD/UPDATE/SUPERSEDE/NOOP 写入合并、分层读取与使用统计
 - SQLite schema、顺序 migration、op-sqlite 适配层、备份 ZIP 格式
-- Vitest 单测 196 个
+- Vitest 单测 217 个
 
-真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、P1-3/4/5/6 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
+真机 FTS5 验证、EPUB 渲染/引用跳转、Memory 设置页、P1-5/P1-6 与 M1+ 功能仍待后续里程碑；Expo Go 不可用，必须使用 dev build。
 
 ## 常用命令
 

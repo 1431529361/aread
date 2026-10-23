@@ -31,7 +31,7 @@
 | P2-2 | Procedural memory / 提示词优化 | memory | 2 天 | P0-4 | v2 |
 | P2-3 | Agent trace 持久化与回放 | agent | 1 天 | P0-1 | v2 |
 
-> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2、P1-3 已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-4/5/6 待排期。
+> 进度（2026-10-23）：P0-1、P0-2（纯逻辑）、P0-3（除真机 spike）、P0-4（除 UI）、P1-1、P1-2、P1-3、P1-4 已完成，均各有独立 commit。S-1 按用户要求暂不在 Web 端执行。P1-5/6 待排期。
 
 ## 2. P0 任务详情
 
@@ -280,16 +280,22 @@ ALTER TABLE user_memories ADD COLUMN use_count INTEGER DEFAULT 0;
 
 > 当前状态（2026-10-23）：migration v4 增加 `rag_chunks.parent_index`；索引默认使用 parent-child 分块，检索开启 `expandParents` 即可返回父块文本；引用 locator 仍指向子块。单测覆盖父块合并、去重、预算截断与检索接入；答案完整度对比待 P1-6 评测集。
 
-### P1-3 检索重排
-- 召回 Top-20 后接 bge-reranker 或同类 API，精排到 Top-5。
-- 失败或无 Key 时自动跳过重排，不影响主流程。
-- 验收：黄金集上的引用准确率提升；p95 延迟增加 < 500ms。
+### P1-3 检索重排（rerank）
+- [x] 召回 Top-20 后接 bge-reranker 或同类 API，精排到 Top-5。
+  - 复用现有对话 Provider 做 LLM rerank，无需独立 Rerank Key；也可注入原生 rerank 端点。
+- [x] 失败或无 Key 时自动跳过重排，不影响主流程。
+- [ ] 验收：黄金集上的引用准确率提升；p95 延迟增加 < 500ms。
+
+> 当前状态（2026-10-23）：`core/rag/rerank.ts` 已完成；`retrieveInBook` / `retrieveInLibrary` 支持 `rerank`，默认取 Top-20 候选重排后截取 Top-K。请求失败、解析失败或候选不足时自动回退原顺序；10 项单测覆盖解析、重排与回退。准确率/延迟验收依赖 P1-6。
 
 ### P1-4 Agent 工具扩展 + 并行调用
-- 新增工具：`getSurroundingText`、`listChapters`、`getChapter`、`searchNotes`、`searchLibrary`、`getReadingHistory`。
-- 同一轮多个 tool_calls 并行执行，并发上限 3。
-- 客户端断开时通过 AbortController 取消上游请求。
-- 验收：工具调用轮次下降；长问题端到端延迟下降。
+- [x] 新增工具：`getSurroundingText`、`listChapters`、`getChapter`、`searchNotes`、`searchLibrary`、`getReadingHistory`。
+- [x] 同一轮多个 tool_calls 并行执行，并发上限 3。
+- [x] 客户端断开时通过 AbortController 取消上游请求。
+  - LLM chat/stream 透传 signal；工具执行前检查取消，取消后不启动新工具。
+- [ ] 验收：工具调用轮次下降；长问题端到端延迟下降。
+
+> 当前状态（2026-10-23）：9 个默认工具已注册；同轮工具并发 3、结果按原顺序回灌；章节列表使用独立结果截断上限。并行/取消/多工具回灌均有单测；延迟与轮次收益待 P1-6 评测集。
 
 ### P1-5 全书分层 map-reduce
 - 修复现有问题：只取前 8 章、每章前 2000 字（`orchestrator.js:95`、`orchestrator.js:147`）。

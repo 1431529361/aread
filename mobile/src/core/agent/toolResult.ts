@@ -3,6 +3,12 @@ export const MAX_TOOL_ARRAY_ITEMS = 8;
 export const MAX_TOOL_STRING_LENGTH = 600;
 export const MAX_TOOL_OBJECT_KEYS = 20;
 
+export interface ToolResultLimits {
+  maxArrayItems?: number;
+  maxStringLength?: number;
+  maxObjectKeys?: number;
+}
+
 export function truncateText(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}…(已截断)`;
@@ -32,19 +38,25 @@ export function parseToolArguments(raw: string | null | undefined): ParsedToolAr
   return { ok: true, args: parsed as Record<string, unknown> };
 }
 
-function sanitizeForJson(value: unknown, depth: number): unknown {
+function sanitizeForJson(
+  value: unknown,
+  depth: number,
+  limits: Required<ToolResultLimits>,
+): unknown {
   if (depth > 6) return '…(深度已截断)';
 
-  if (typeof value === 'string') return truncateText(value, MAX_TOOL_STRING_LENGTH);
+  if (typeof value === 'string') {
+    return truncateText(value, limits.maxStringLength);
+  }
 
   if (Array.isArray(value)) {
     const items = value
-      .slice(0, MAX_TOOL_ARRAY_ITEMS)
-      .map((item) => sanitizeForJson(item, depth + 1));
-    if (value.length > MAX_TOOL_ARRAY_ITEMS) {
+      .slice(0, limits.maxArrayItems)
+      .map((item) => sanitizeForJson(item, depth + 1, limits));
+    if (value.length > limits.maxArrayItems) {
       items.push({
         __truncated__: true,
-        omitted: value.length - MAX_TOOL_ARRAY_ITEMS,
+        omitted: value.length - limits.maxArrayItems,
       });
     }
     return items;
@@ -53,10 +65,10 @@ function sanitizeForJson(value: unknown, depth: number): unknown {
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>);
     const result: Record<string, unknown> = {};
-    for (const [key, entry] of entries.slice(0, MAX_TOOL_OBJECT_KEYS)) {
-      result[key] = sanitizeForJson(entry, depth + 1);
+    for (const [key, entry] of entries.slice(0, limits.maxObjectKeys)) {
+      result[key] = sanitizeForJson(entry, depth + 1, limits);
     }
-    if (entries.length > MAX_TOOL_OBJECT_KEYS) result.__truncated__ = true;
+    if (entries.length > limits.maxObjectKeys) result.__truncated__ = true;
     return result;
   }
 
@@ -67,10 +79,19 @@ function sanitizeForJson(value: unknown, depth: number): unknown {
  * 工具结果按字段截断，始终保持合法 JSON。
  * 极端情况下退化为 { truncated, preview }，而不是截断 JSON 字符串。
  */
-export function serializeToolResult(value: unknown): string {
+export function serializeToolResult(
+  value: unknown,
+  limits: ToolResultLimits = {},
+): string {
+  const resolved: Required<ToolResultLimits> = {
+    maxArrayItems: limits.maxArrayItems ?? MAX_TOOL_ARRAY_ITEMS,
+    maxStringLength: limits.maxStringLength ?? MAX_TOOL_STRING_LENGTH,
+    maxObjectKeys: limits.maxObjectKeys ?? MAX_TOOL_OBJECT_KEYS,
+  };
+
   let json: string;
   try {
-    json = JSON.stringify(sanitizeForJson(value, 0)) ?? 'null';
+    json = JSON.stringify(sanitizeForJson(value, 0, resolved)) ?? 'null';
   } catch {
     return JSON.stringify({ error: 'tool_result_not_serializable' });
   }

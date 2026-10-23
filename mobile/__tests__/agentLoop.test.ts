@@ -5,6 +5,7 @@ import {
   type AgentLlmAdapter,
 } from '../src/core/agent/loop';
 import type { AgentToolContext } from '../src/core/agent/types';
+import type { AgentTool } from '../src/core/agent/types';
 import {
   LlmRequestError,
   type ChatMessage,
@@ -210,6 +211,134 @@ describe('runAgentLoop', () => {
       (event) => event.type === 'tool_result' && event.blocked,
     );
     expect(blocked).toBeTruthy();
+  });
+
+  it('同一轮多个工具调用都会执行并按原顺序回灌', async () => {
+    const events: AgentEvent[] = [];
+    const multipleToolCalls: ChatResponse = {
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'searchInBook', arguments: '{"query":"自由"}' },
+              },
+              {
+                id: 'c2',
+                type: 'function',
+                function: {
+                  name: 'getChapterInfo',
+                  arguments: '{"chapterTitle":"第二章"}',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    };
+    const { adapter, chatOptions } = makeAdapter([
+      multipleToolCalls,
+      stop('完成'),
+    ]);
+
+    await runAgentLoop({
+      config,
+      messages: baseMessages,
+      question: '自由是什么？',
+      context: { ...context, content: '第一章 开始\n内容。\n第二章 自由\n自由是重要的价值。' },
+      retrieve: async () => [hit],
+      llm: adapter,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events.filter((event) => event.type === 'tool_result')).toHaveLength(2);
+    const toolMessages = chatOptions[1].messages.filter(
+      (message) => message.role === 'tool',
+    );
+    expect(toolMessages.map((message) => message.tool_call_id)).toEqual([
+      'c1',
+      'c2',
+    ]);
+  });
+
+  it('并行执行工具时并发上限为 3', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const slowTool: AgentTool = {
+      name: 'slowTool',
+      description: '测试并发',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active--;
+        return { ok: true };
+      },
+    };
+    const multipleToolCalls: ChatResponse = {
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: Array.from({ length: 4 }, (_, index) => ({
+              id: `call-${index}`,
+              type: 'function' as const,
+              function: { name: 'slowTool', arguments: '{}' },
+            })),
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    };
+    const { adapter } = makeAdapter([multipleToolCalls, stop('完成')]);
+
+    await runAgentLoop({
+      config,
+      messages: baseMessages,
+      question: '测试',
+      context,
+      tools: [slowTool],
+      llm: adapter,
+    });
+
+    expect(maxActive).toBe(3);
+  });
+
+  it('已取消时不执行工具', async () => {
+    let executed = 0;
+    const tool: AgentTool = {
+      name: 'cancelTool',
+      description: '测试取消',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        executed++;
+        return { ok: true };
+      },
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const { adapter } = makeAdapter([
+      toolCall('call-1', 'cancelTool', '{}'),
+      stop('完成'),
+    ]);
+
+    await expect(
+      runAgentLoop({
+        config,
+        messages: baseMessages,
+        question: '测试',
+        context,
+        tools: [tool],
+        llm: adapter,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/取消/);
+    expect(executed).toBe(0);
   });
 
   it('预检索查询包含最近两轮用户消息', async () => {

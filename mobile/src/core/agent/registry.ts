@@ -3,11 +3,23 @@ import type { AgentTool, AgentToolContext } from './types';
 import { searchInBookTool } from './tools/searchInBook';
 import { getChapterInfoTool } from './tools/getChapterInfo';
 import { lookupCharacterTool } from './tools/lookupCharacter';
+import { listChaptersTool } from './tools/listChapters';
+import { getChapterTool } from './tools/getChapter';
+import { getSurroundingTextTool } from './tools/getSurroundingText';
+import { searchLibraryTool } from './tools/searchLibrary';
+import { searchNotesTool } from './tools/searchNotes';
+import { getReadingHistoryTool } from './tools/getReadingHistory';
 
 export const DEFAULT_TOOLS: readonly AgentTool[] = [
   searchInBookTool,
   getChapterInfoTool,
   lookupCharacterTool,
+  listChaptersTool,
+  getChapterTool,
+  getSurroundingTextTool,
+  searchLibraryTool,
+  searchNotesTool,
+  getReadingHistoryTool,
 ];
 
 export function getToolSchemas(
