@@ -58,6 +58,42 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 5,
     statements: [`ALTER TABLE provider_config ADD COLUMN rerank_model TEXT`],
   },
+  {
+    version: 6,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS task_runs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        book_id TEXT NOT NULL,
+        task_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        progress REAL NOT NULL DEFAULT 0,
+        total_nodes INTEGER NOT NULL DEFAULT 0,
+        completed_nodes INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_task_runs_book_task
+        ON task_runs(book_id, task_type, started_at DESC)`,
+      `CREATE TABLE IF NOT EXISTS task_node_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id TEXT NOT NULL,
+        task_type TEXT NOT NULL,
+        unit_key TEXT NOT NULL,
+        unit_hash TEXT NOT NULL,
+        prompt_version TEXT NOT NULL,
+        model_sig TEXT NOT NULL,
+        output_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(book_id, task_type, unit_key, prompt_version, model_sig)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_task_node_cache_lookup
+        ON task_node_cache(book_id, task_type, unit_key, prompt_version, model_sig)`,
+      `ALTER TABLE provider_config ADD COLUMN context_window INTEGER NOT NULL DEFAULT 200000`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

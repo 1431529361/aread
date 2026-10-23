@@ -1,4 +1,5 @@
 import type { DbExecutor } from '../adapter';
+import { DEFAULT_CONTEXT_WINDOW } from '../../core/context/tokens';
 
 export type ProviderKind = 'chat' | 'embedding';
 
@@ -11,6 +12,8 @@ export interface ProviderConfigRecord {
   maskedKey: string | null;
   /** 仅 embedding 行使用；留空表示不启用 rerank */
   rerankModel: string | null;
+  /** 仅 chat 行使用；用于任务上下文预算 */
+  contextWindow: number;
   updatedAt: string | null;
 }
 
@@ -22,6 +25,7 @@ interface ProviderRow {
   dimensions_param: number | null;
   masked_key: string | null;
   rerank_model: string | null;
+  context_window: number | null;
   updated_at: string | null;
 }
 
@@ -35,6 +39,7 @@ function mapRow(row: ProviderRow): ProviderConfigRecord {
       row.dimensions_param == null ? null : Number(row.dimensions_param),
     maskedKey: row.masked_key,
     rerankModel: row.rerank_model?.trim() || null,
+    contextWindow: Number(row.context_window ?? DEFAULT_CONTEXT_WINDOW),
     updatedAt: row.updated_at,
   };
 }
@@ -68,6 +73,8 @@ export interface SaveProviderConfig {
   maskedKey?: string | null;
   /** 仅 embedding 使用；空字符串等价于关闭 */
   rerankModel?: string | null;
+  /** 仅 chat 使用；默认 200000 */
+  contextWindow?: number | null;
   now?: string;
 }
 
@@ -80,11 +87,15 @@ export async function saveProviderConfig(
   const dims = config.kind === 'embedding' ? config.dims ?? 1024 : null;
   const dimensionsParam =
     config.kind === 'embedding' ? config.dimensionsParam ?? null : null;
+  const contextWindow =
+    config.kind === 'chat'
+      ? Math.max(1000, Math.floor(config.contextWindow ?? DEFAULT_CONTEXT_WINDOW))
+      : DEFAULT_CONTEXT_WINDOW;
 
   await db.execute(
     `INSERT INTO provider_config
-      (kind, base_url, model, dims, dimensions_param, masked_key, rerank_model, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (kind, base_url, model, dims, dimensions_param, masked_key, rerank_model, context_window, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(kind) DO UPDATE SET
        base_url = excluded.base_url,
        model = excluded.model,
@@ -92,6 +103,7 @@ export async function saveProviderConfig(
        dimensions_param = excluded.dimensions_param,
        masked_key = excluded.masked_key,
        rerank_model = excluded.rerank_model,
+       context_window = excluded.context_window,
        updated_at = excluded.updated_at`,
     [
       config.kind,
@@ -101,6 +113,7 @@ export async function saveProviderConfig(
       dimensionsParam,
       config.maskedKey ?? null,
       rerankModel,
+      contextWindow,
       config.now ?? new Date().toISOString(),
     ],
   );

@@ -135,6 +135,7 @@ describe('runMigrations', () => {
       ).map((row) => row.name),
     );
     expect(providerColumns.has('rerank_model')).toBe(true);
+    expect(providerColumns.has('context_window')).toBe(true);
 
     const userVersion = raw.prepare('PRAGMA user_version').get() as {
       user_version: number;

@@ -54,10 +54,15 @@ describe('provider_config', () => {
       baseUrl: 'https://token-plan.example.com/v1',
       model: 'qwen-test',
       rerankModel: 'should-be-ignored',
+      contextWindow: 128000,
     });
 
     const record = await getProviderConfig(db, 'chat');
-    expect(record).toMatchObject({ kind: 'chat', rerankModel: null });
+    expect(record).toMatchObject({
+      kind: 'chat',
+      rerankModel: null,
+      contextWindow: 128000,
+    });
     expect((await listProviderConfigs(db)).map((item) => item.kind)).toEqual([
       'chat',
     ]);

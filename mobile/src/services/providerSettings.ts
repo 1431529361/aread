@@ -2,6 +2,14 @@ import type { ProviderConfigRecord } from '../db/repositories/providers';
 import type { EmbeddingClientConfig } from '../core/embedding/client';
 import type { LlmClientConfig } from '../core/llm/client';
 import { createNativeReranker, type RerankFunction } from '../core/rag/rerank';
+import { DEFAULT_CONTEXT_WINDOW } from '../core/context/tokens';
+
+export function getChatContextWindow(record: ProviderConfigRecord): number {
+  return record.kind === 'chat'
+    ? record.contextWindow
+    : DEFAULT_CONTEXT_WINDOW;
+}
+
 
 export function buildChatConfig(
   record: ProviderConfigRecord,
