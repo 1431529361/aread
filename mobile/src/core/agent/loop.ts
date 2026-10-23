@@ -205,14 +205,16 @@ export async function runAgentLoop(options: AgentRunOptions): Promise<AgentRunRe
       type: 'end',
       content: sanitized.answer,
       iterations,
-      ...extras,
+      fallback: extras.fallback,
+      maxedOut: extras.maxedOut,
     });
     return {
       content: sanitized.answer,
       iterations,
       trace,
       evidence,
-      ...extras,
+      fallback: extras.fallback,
+      maxedOut: extras.maxedOut,
     };
   };
 

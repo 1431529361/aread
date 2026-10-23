@@ -262,13 +262,17 @@ export async function extractAndMergeMemories(
             embedding,
             now,
           });
-          await markMemorySuperseded(tx, {
-            userId: options.userId,
-            id: target.memory.id,
-            supersededBy: newId,
-            now,
-          });
-          superseded++;
+          if (newId === target.memory.id) {
+            noop++;
+          } else {
+            await markMemorySuperseded(tx, {
+              userId: options.userId,
+              id: target.memory.id,
+              supersededBy: newId,
+              now,
+            });
+            superseded++;
+          }
         }
       }
     });
