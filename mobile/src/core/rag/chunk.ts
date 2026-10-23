@@ -34,7 +34,7 @@ export function normalizeText(content: string): string {
   return content.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 }
 
-function splitParagraphs(content: string): Paragraph[] {
+export function splitParagraphs(content: string): Paragraph[] {
   const paragraphs: Paragraph[] = [];
   const re = /[^\n]+/g;
   let match: RegExpExecArray | null;

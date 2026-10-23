@@ -1,19 +1,6 @@
-export type LocatorKind = 'txt' | 'epub';
+import type { Locator, LocatorKind, LocatorRow } from '../core/types';
 
-export interface Locator {
-  kind: LocatorKind;
-  /** EPUB 的 spine 文档路径；TXT 为 null */
-  href: string | null;
-  start: number;
-  end: number;
-}
-
-export interface LocatorRow {
-  loc_kind: LocatorKind;
-  loc_href: string | null;
-  loc_start: number;
-  loc_end: number;
-}
+export type { Locator, LocatorKind, LocatorRow };
 
 export function createTxtLocator(start: number, end: number): Locator {
   return normalizeLocator({ kind: 'txt', href: null, start, end });
