@@ -1,6 +1,8 @@
 import type { DbAdapter } from '../adapter';
 import { buildFtsQuery } from '../../core/rag/fts';
-import { toFtsDocument } from '../../core/rag/tokenize';
+import { scoreBm25 } from '../../core/rag/bm25';
+import { toFtsDocument, tokenize } from '../../core/rag/tokenize';
+import { isFts5Available } from '../fts5';
 import type { ChunkRecord, Locator } from '../../core/types';
 
 export interface NewChunk {
@@ -64,9 +66,11 @@ export async function writeLexicalIndex(
 
   return db.transaction(async (tx) => {
     await tx.execute('DELETE FROM rag_fts WHERE book_id = ?', [bookId]);
+    await tx.execute('DELETE FROM rag_lexical WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_vectors WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_chunks WHERE book_id = ?', [bookId]);
 
+    const useFts = isFts5Available();
     const ids: number[] = [];
     for (const chunk of chunks) {
       const result = await tx.execute(
@@ -90,10 +94,18 @@ export async function writeLexicalIndex(
       if (!chunkId) throw new Error('写入 rag_chunks 后未获得 chunk id');
       ids.push(chunkId);
 
-      await tx.execute(
-        'INSERT INTO rag_fts (chunk_id, book_id, tokens) VALUES (?, ?, ?)',
-        [chunkId, bookId, toFtsDocument(chunk.text)],
-      );
+      const tokens = toFtsDocument(chunk.text);
+      if (useFts) {
+        await tx.execute(
+          'INSERT INTO rag_fts (chunk_id, book_id, tokens) VALUES (?, ?, ?)',
+          [chunkId, bookId, tokens],
+        );
+      } else {
+        await tx.execute(
+          'INSERT INTO rag_lexical (chunk_id, book_id, tokens) VALUES (?, ?, ?)',
+          [chunkId, bookId, tokens],
+        );
+      }
     }
 
     return ids;
@@ -103,6 +115,7 @@ export async function writeLexicalIndex(
 export async function deleteBookIndexData(db: DbAdapter, bookId: string): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.execute('DELETE FROM rag_fts WHERE book_id = ?', [bookId]);
+    await tx.execute('DELETE FROM rag_lexical WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_vectors WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_chunks WHERE book_id = ?', [bookId]);
   });
@@ -170,13 +183,16 @@ export async function countChunksForBook(db: DbAdapter, bookId: string): Promise
 }
 
 /**
- * FTS5 top-N。bm25() 越小越相关，对外统一取反成“越大越相关”。
+ * 词法检索：FTS5 可用时走 MATCH；否则用 rag_lexical + JS BM25。
+ * bm25() 越小越相关，对外统一取反成“越大越相关”。
  * query 无有效 token 时返回空数组。
  */
 export async function queryFts(
   db: DbAdapter,
   params: { query: string; bookId?: string | null; limit: number },
 ): Promise<FtsHit[]> {
+  if (!isFts5Available()) return queryLexicalFallback(db, params);
+
   const ftsQuery = buildFtsQuery(params.query);
   if (!ftsQuery) return [];
 
@@ -199,6 +215,48 @@ export async function queryFts(
   for (const row of rows) {
     const chunk = chunks.get(row.id);
     if (chunk) hits.push({ chunk, score: -Number(row.score) });
+  }
+  return hits;
+}
+
+interface LexicalRow {
+  id: number;
+  book_id: string;
+  tokens: string;
+}
+
+async function queryLexicalFallback(
+  db: DbAdapter,
+  params: { query: string; bookId?: string | null; limit: number },
+): Promise<FtsHit[]> {
+  const queryTokens = tokenize(params.query);
+  if (queryTokens.length === 0) return [];
+
+  const rows = params.bookId
+    ? await db.queryAll<LexicalRow>(
+        'SELECT chunk_id AS id, book_id, tokens FROM rag_lexical WHERE book_id = ?',
+        [params.bookId],
+      )
+    : await db.queryAll<LexicalRow>(
+        'SELECT chunk_id AS id, book_id, tokens FROM rag_lexical',
+      );
+  if (rows.length === 0) return [];
+
+  const ranked = scoreBm25(
+    queryTokens,
+    rows.map((row) => ({
+      id: row.id,
+      tokens: row.tokens ? row.tokens.split(' ').filter(Boolean) : [],
+    })),
+    { k1: 1.2, b: 0.75 },
+  ).slice(0, Math.max(1, Math.floor(params.limit)));
+  if (ranked.length === 0) return [];
+
+  const chunks = await loadChunksByIds(db, ranked.map((item) => item.id));
+  const hits: FtsHit[] = [];
+  for (const item of ranked) {
+    const chunk = chunks.get(item.id);
+    if (chunk) hits.push({ chunk, score: item.score });
   }
   return hits;
 }
