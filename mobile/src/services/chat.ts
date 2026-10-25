@@ -12,7 +12,7 @@ import { buildAgentSystemPrompt, buildAgentUserMessage } from '../core/llm/promp
 import { selectHistoryMessages } from '../core/conversation/history';
 import type { ChatMessage } from '../core/llm/client';
 import type { Evidence, RetrievalHit } from '../core/types';
-import { loadBookTextById } from './bookContent';
+import { loadBookContentById } from './bookContent';
 import { retrieveInBook } from './retrieval';
 import { createNativeLlmAdapter, nativeFetch } from './llmRuntime';
 import { loadChatRuntime, loadEmbeddingRuntime } from './providerRuntime';
@@ -108,7 +108,7 @@ export async function sendBookChat(params: SendBookChatParams): Promise<SendBook
   const runtime = await loadChatRuntime(db);
   if (!runtime) throw new ChatNotConfiguredError();
 
-  const { book, text } = await loadBookTextById(db, { userId, bookId });
+  const { book, text } = await loadBookContentById(db, { userId, bookId });
   const priorMessages = await listMessages(db, conversationId);
   const userContent = composeUserContent(question, params.selectedText);
 
@@ -155,7 +155,8 @@ export async function sendBookChat(params: SendBookChatParams): Promise<SendBook
       userId,
       bookId,
       bookName: book.title,
-      content: text,
+      // EPUB 的 offset 分属各 spine 文档，暂不注入全文；检索与引用仍走带 href 的 locator
+      content: text ?? undefined,
       retrieve,
     },
     retrieve,

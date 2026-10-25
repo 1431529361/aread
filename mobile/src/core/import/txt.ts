@@ -1,8 +1,9 @@
 import { normalizeText } from '../rag/chunk';
+import { decodeGb18030, looksLikeBinaryText } from './gbk';
 
 export const MAX_TXT_BYTES = 50 * 1024 * 1024;
 
-export type TxtEncoding = 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be';
+export type TxtEncoding = 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be' | 'gb18030';
 
 export type TxtDecodeErrorCode = 'TOO_LARGE' | 'NON_UTF8' | 'BINARY';
 
@@ -118,8 +119,9 @@ export interface DecodedTxt {
 }
 
 /**
- * 导入时只接受 UTF-8 / UTF-16（含 BOM）。
- * GBK/GB18030 会在 M1 通过 iconv 处理；此处明确报错，避免乱码入库。
+ * 导入时接受 UTF-8 / UTF-16（含 BOM）/ GBK-GB18030（M1 起支持）。
+ * 判断顺序：BOM → 严格 UTF-8 → UTF-16 启发式 → GB18030。
+ * 已知限制：Big5 / Shift-JIS 可能被 GB18030 误判，见 docs/m1-verification.md。
  */
 export function decodeTxtBytes(bytes: Uint8Array): DecodedTxt {
   if (bytes.length > MAX_TXT_BYTES) {
@@ -172,11 +174,19 @@ export function decodeTxtBytes(bytes: Uint8Array): DecodedTxt {
       } else if (utf16 === 'be') {
         text = decodeUtf16(bytes, false, 0);
         encoding = 'utf-16be';
+      } else if (looksLikeBinaryText(bytes)) {
+        throw new TxtDecodeError('BINARY', '文件包含二进制内容，无法作为 TXT 阅读');
       } else {
-        throw new TxtDecodeError(
-          'NON_UTF8',
-          '检测到非 UTF-8 编码（可能是 GBK/GB18030）。当前版本仅支持 UTF-8 / UTF-16 TXT，GBK 将在 M1 支持。',
-        );
+        const gbk = decodeGb18030(bytes);
+        if (gbk !== null && gbk.trim()) {
+          text = gbk;
+          encoding = 'gb18030';
+        } else {
+          throw new TxtDecodeError(
+            'NON_UTF8',
+            '无法识别文本编码（支持 UTF-8 / UTF-16 / GBK-GB18030，Big5 等暂不支持）',
+          );
+        }
       }
     }
   }
@@ -186,7 +196,7 @@ export function decodeTxtBytes(bytes: Uint8Array): DecodedTxt {
 
 /** 从文件名推导书名：去掉扩展名和常见下载后缀空白。 */
 export function titleFromFilename(filename: string): string {
-  const base = filename.replace(/^.*[\\/]/, '').replace(/\.(txt|text)$/i, '').trim();
+  const base = filename.replace(/^.*[\\/]/, '').replace(/\.(txt|text|epub)$/i, '').trim();
   return base || '未命名书籍';
 }
 
