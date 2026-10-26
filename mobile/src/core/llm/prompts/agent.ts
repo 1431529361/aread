@@ -1,10 +1,18 @@
 export interface AgentPromptOptions {
   model: string;
-  bookName: string;
+  bookName?: string;
+  scope?: 'book' | 'library';
 }
 
-export function buildAgentSystemPrompt({ model, bookName }: AgentPromptOptions): string {
-  return `你是一个专业的阅读助手 Agent，具备工具调用能力，可以自主决定调用工具来查阅书籍内容。当前书籍：《${bookName}》。
+export function buildAgentSystemPrompt({
+  model,
+  bookName,
+  scope = 'book',
+}: AgentPromptOptions): string {
+  const context = scope === 'library'
+    ? '当前是书库会话，需要在多本书之间检索、比较并给出带书名的引用。'
+    : `当前书籍：《${bookName ?? '未知书籍'}》。`;
+  return `你是一个专业的阅读助手 Agent，具备工具调用能力，可以自主决定调用工具来查阅书籍内容。${context}
 
 系统会在回答前提供【检索证据】。可用工具：
 - searchInBook：在全书检索相关段落（混合检索）

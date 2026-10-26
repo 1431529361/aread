@@ -24,7 +24,10 @@ interface ProviderFormProps {
   db: DbAdapter;
   kind: ProviderKind;
   record: ProviderConfigRecord | null;
-  onSaved?: (record: ProviderConfigRecord) => void;
+  onSaved?: (
+    record: ProviderConfigRecord,
+    previous: ProviderConfigRecord | null,
+  ) => void | Promise<void>;
 }
 
 function toNumberOrNull(value: string): number | null {
@@ -172,7 +175,7 @@ export function ProviderForm({ db, kind, record, onSaved }: ProviderFormProps) {
       const saved = await getProviderConfig(db, kind);
       setApiKey('');
       if (saved?.maskedKey) setSavedKeyMask(saved.maskedKey);
-      if (saved) onSaved?.(saved);
+      if (saved) await onSaved?.(saved, record);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

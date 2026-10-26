@@ -65,6 +65,11 @@ async function seedLibrary() {
     items: [{ chunkId: b2Ids[0], vector: [0.9, 0.1, 0, 0] }],
   });
 
+  await db.execute(
+    `UPDATE books_meta SET index_status = 'ready', embed_sig = 'sig1', embed_dims = 4
+     WHERE id IN ('b1', 'b2')`,
+  );
+
   return { db, raw, close, b1Ids, b2Ids };
 }
 
@@ -201,6 +206,25 @@ describe('retrieveInLibrary', () => {
     const b2Hit = hits.find((hit) => hit.bookId === 'b2');
     expect(b2Hit?.bookTitle).toBe('书二');
     expect(b2Hit?.loc).toEqual({ kind: 'txt', href: null, start: 0, end: 13 });
+    close();
+  });
+
+  it('配置切换期间只使用已激活当前 sig 的书籍向量', async () => {
+    const { db, close } = await seedLibrary();
+    await db.execute(
+      "UPDATE books_meta SET index_status = 'partial', embed_sig = 'old-sig' WHERE id = 'b2'",
+    );
+
+    const hits = await retrieveInLibrary({
+      db,
+      query: '自由',
+      embedQuery: queryFree,
+      activeSig: 'sig1',
+      dims: 4,
+      topK: 5,
+    });
+    const b2 = hits.find((hit) => hit.bookId === 'b2');
+    expect(b2?.sources).toEqual(['fts']);
     close();
   });
 

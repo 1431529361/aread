@@ -13,6 +13,7 @@ import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { BookRecord } from '../../src/db/repositories/books';
 import { listBooks } from '../../src/db/repositories/books';
+import { getOrCreateLibraryConversation } from '../../src/db/repositories/conversations';
 import { getDatabase } from '../../src/db/client';
 import { loadChatRuntime } from '../../src/services/providerRuntime';
 import { importBook, pickBookFile } from '../../src/services/bookImport';
@@ -25,7 +26,7 @@ import {
   type ImportProgressState,
 } from '../../src/components/ImportProgressModal';
 import { Button, Card, EmptyState } from '../../src/components/ui';
-import { openBookDetail, openReader, openSettings } from '../../src/navigation/routes';
+import { openBookDetail, openChat, openReader, openSettings } from '../../src/navigation/routes';
 import { colors, radius, spacing, type } from '../../src/theme';
 
 export default function LibraryScreen() {
@@ -108,6 +109,19 @@ export default function LibraryScreen() {
     }
   }
 
+  async function handleLibraryChat(): Promise<void> {
+    if (!chatReady) {
+      openSettings();
+      return;
+    }
+    try {
+      const conversation = await getOrCreateLibraryConversation(getDatabase(), 'local');
+      openChat(conversation.id);
+    } catch (caught) {
+      Alert.alert('无法开始书库问答', caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   const totalBytes = books.reduce((sum, book) => sum + book.size, 0);
 
   return (
@@ -157,6 +171,20 @@ export default function LibraryScreen() {
                   </Text>
                   <Text style={styles.bannerLink}>去设置 ›</Text>
                 </Pressable>
+              ) : null}
+              {books.length > 0 ? (
+                <Card style={styles.libraryChatCard}>
+                  <View style={styles.libraryChatText}>
+                    <Text style={styles.libraryChatTitle}>书库问答</Text>
+                    <Text style={styles.libraryChatBody}>跨书检索、比较观点，回答引用可跳回原文</Text>
+                  </View>
+                  <Button
+                    title="开始"
+                    small
+                    variant="secondary"
+                    onPress={() => void handleLibraryChat()}
+                  />
+                </Card>
               ) : null}
               {error ? (
                 <Card style={styles.errorCard}>
@@ -225,6 +253,15 @@ const styles = StyleSheet.create({
   },
   bannerText: { ...type.small, flex: 1, color: colors.warn },
   bannerLink: { ...type.small, color: colors.warn, fontWeight: '700' },
+  libraryChatCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  libraryChatText: { flex: 1, gap: 2 },
+  libraryChatTitle: { ...type.h2 },
+  libraryChatBody: { ...type.tiny },
   pressed: { opacity: 0.7 },
   errorCard: { gap: spacing.sm, marginBottom: spacing.md },
   errorTitle: { ...type.h2, color: colors.danger },

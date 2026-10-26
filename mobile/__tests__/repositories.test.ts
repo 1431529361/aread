@@ -17,7 +17,9 @@ import {
   deleteConversation,
   getConversation,
   getOrCreateBookConversation,
+  getOrCreateLibraryConversation,
   listConversationsForBook,
+  listLibraryConversations,
   listMessages,
   updateMessageCitations,
 } from '../src/db/repositories/conversations';
@@ -212,6 +214,31 @@ describe('conversations repository', () => {
         await getConversation(db, { userId: LOCAL_USER_ID, conversationId: second.id }),
       ).toBeNull();
       expect(await listMessages(db, second.id)).toEqual([]);
+    } finally {
+      close();
+    }
+  });
+
+  it('创建并复用独立书库会话，新建时归档旧会话', async () => {
+    const { db, close } = await createTestDb();
+    try {
+      const first = await getOrCreateLibraryConversation(db, LOCAL_USER_ID);
+      expect(first).toMatchObject({ scope: 'library', bookId: null, status: 'active' });
+      expect((await getOrCreateLibraryConversation(db, LOCAL_USER_ID)).id).toBe(first.id);
+
+      const second = await createConversation(db, {
+        userId: LOCAL_USER_ID,
+        scope: 'library',
+        title: '新的书库会话',
+      });
+      expect(second.id).not.toBe(first.id);
+      expect(
+        (await getConversation(db, {
+          userId: LOCAL_USER_ID,
+          conversationId: first.id,
+        }))?.status,
+      ).toBe('archived');
+      expect((await listLibraryConversations(db, LOCAL_USER_ID))).toHaveLength(2);
     } finally {
       close();
     }

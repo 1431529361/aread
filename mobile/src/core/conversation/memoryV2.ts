@@ -18,7 +18,7 @@ export const MEMORY_LAYERS: readonly MemoryLayer[] = [
 ];
 
 export const MEMORY_IDLE_THRESHOLD_MS = 5 * 60 * 1000;
-export const MEMORY_EXTRACT_EVERY_TURNS = 10;
+export const MEMORY_EXTRACT_EVERY_TURNS = 6;
 export const MEMORY_PROFILE_MAX_ITEMS = 8;
 export const MEMORY_PROFILE_MAX_CHARS = 300;
 export const MEMORY_EPISODIC_MAX_ITEMS = 4;
@@ -181,7 +181,7 @@ export function parseAdjudicationDecisions(
   );
 }
 
-/** 触发时机：空闲 5 分钟或累计 10 轮用户消息；不再每轮抽取。 */
+/** 触发时机：空闲 5 分钟或累计 6 轮用户消息；不再每轮抽取。 */
 export function shouldExtractMemories(params: {
   userTurnsSinceExtract: number;
   idleMs: number;

@@ -1,6 +1,7 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,6 +18,17 @@ import { ProviderForm } from '../../src/components/ProviderForm';
 import { Button, Card, Divider, Section } from '../../src/components/ui';
 import { getDiagnostics, type Diagnostics } from '../../src/services/diagnostics';
 import { formatFileSize } from '../../src/core/import/txt';
+import { computeEmbedSig } from '../../src/core/embedding/signature';
+import {
+  deleteMemory,
+  listMemories,
+} from '../../src/db/repositories/memories';
+import type { MemoryRecord } from '../../src/core/conversation/memoryV2';
+import {
+  markBooksForVectorRebuild,
+  rebuildLibraryVectors,
+  type LibraryIndexProgress,
+} from '../../src/services/indexRuntime';
 import { colors, spacing, type } from '../../src/theme';
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -32,20 +44,26 @@ export default function SettingsScreen() {
   const [chatRecord, setChatRecord] = useState<ProviderConfigRecord | null>(null);
   const [embeddingRecord, setEmbeddingRecord] = useState<ProviderConfigRecord | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
+  const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [rechecking, setRechecking] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildProgress, setRebuildProgress] = useState<LibraryIndexProgress | null>(null);
+  const rebuildAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
     try {
       const db = getDatabase();
-      const [chat, embedding, diag] = await Promise.all([
+      const [chat, embedding, diag, memoryList] = await Promise.all([
         getProviderConfig(db, 'chat'),
         getProviderConfig(db, 'embedding'),
         getDiagnostics(db),
+        listMemories(db, 'local'),
       ]);
       setChatRecord(chat);
       setEmbeddingRecord(embedding);
       setDiagnostics(diag);
+      setMemories(memoryList);
     } finally {
       setLoading(false);
     }
@@ -65,6 +83,75 @@ export default function SettingsScreen() {
     } finally {
       setRechecking(false);
     }
+  }
+
+  async function startLibraryRebuild(): Promise<void> {
+    if (rebuilding) return;
+    const controller = new AbortController();
+    rebuildAbortRef.current = controller;
+    setRebuilding(true);
+    setRebuildProgress(null);
+    try {
+      const result = await rebuildLibraryVectors({
+        db: getDatabase(),
+        signal: controller.signal,
+        onProgress: setRebuildProgress,
+      });
+      if (!controller.signal.aborted) {
+        Alert.alert(
+          '向量索引完成',
+          `已完成 ${result.completed} 本${result.partial ? `，${result.partial} 本需要重试` : ''}`,
+        );
+      }
+      await load();
+    } catch (caught) {
+      if (!controller.signal.aborted) {
+        Alert.alert('重建失败', caught instanceof Error ? caught.message : String(caught));
+      }
+    } finally {
+      rebuildAbortRef.current = null;
+      setRebuilding(false);
+      setRebuildProgress(null);
+    }
+  }
+
+  async function handleEmbeddingSaved(
+    saved: ProviderConfigRecord,
+    previous: ProviderConfigRecord | null,
+  ): Promise<void> {
+    setEmbeddingRecord(saved);
+    const sig = computeEmbedSig({ ...saved, dims: saved.dims ?? 1024 });
+    const previousSig = previous
+      ? computeEmbedSig({ ...previous, dims: previous.dims ?? 1024 })
+      : null;
+    if (sig === previousSig) return;
+
+    const affected = await markBooksForVectorRebuild(getDatabase(), sig);
+    if (affected === 0) return;
+    Alert.alert(
+      '需要重建向量索引',
+      `向量配置已改变，${affected} 本书需要用新模型重建。旧向量会保留到每本书重建成功。`,
+      [
+        { text: '稍后' },
+        { text: '立即重建', onPress: () => void startLibraryRebuild() },
+      ],
+    );
+  }
+
+  function handleDeleteMemory(memory: MemoryRecord): void {
+    Alert.alert('删除这条记忆？', memory.content, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            await deleteMemory(getDatabase(), 'local', memory.id);
+            setMemories((current) => current.filter((item) => item.id !== memory.id));
+          })();
+        },
+      },
+    ]);
   }
 
   return (
@@ -99,16 +186,66 @@ export default function SettingsScreen() {
 
             <Section
               title="向量模型（可选）"
-              hint="M0-B 不依赖向量；配置后用于后续语义召回与重排"
+              hint="统一 1024 维；配置后启用语义召回、跨书检索与可续跑索引"
             >
               <Card>
                 <ProviderForm
                   db={getDatabase()}
                   kind="embedding"
                   record={embeddingRecord}
-                  onSaved={setEmbeddingRecord}
+                  onSaved={handleEmbeddingSaved}
                 />
               </Card>
+              {embeddingRecord ? (
+                <Card style={styles.rebuildCard}>
+                  <Text style={styles.aboutTitle}>全库向量索引</Text>
+                  {rebuildProgress ? (
+                    <Text style={styles.aboutBody}>
+                      {rebuildProgress.bookTitle} · {rebuildProgress.current + 1}/
+                      {rebuildProgress.total} · {rebuildProgress.book?.percent ?? 0}%
+                    </Text>
+                  ) : (
+                    <Text style={styles.aboutBody}>
+                      配置变化后可在这里重建；中断后会从尚未写入的分块继续。
+                    </Text>
+                  )}
+                  <Button
+                    title={rebuilding ? '暂停重建' : '重建需要更新的书籍'}
+                    variant="secondary"
+                    onPress={
+                      rebuilding
+                        ? () => rebuildAbortRef.current?.abort()
+                        : () => void startLibraryRebuild()
+                    }
+                  />
+                </Card>
+              ) : null}
+            </Section>
+
+            <Section
+              title="AI 对你的了解"
+              hint="只记录你的偏好、背景与兴趣，不记录书籍内容"
+            >
+              {memories.length === 0 ? (
+                <Card>
+                  <Text style={styles.aboutBody}>暂无长期记忆。每 6 轮对话会自动整理一次。</Text>
+                </Card>
+              ) : (
+                memories.map((memory) => (
+                  <Card key={memory.id} style={styles.memoryCard}>
+                    <Text style={styles.memoryText}>{memory.content}</Text>
+                    <View style={styles.memoryFooter}>
+                      <Text style={styles.rowLabel}>{memory.kind}</Text>
+                      <Button
+                        title="删除"
+                        small
+                        variant="ghost"
+                        onPress={() => handleDeleteMemory(memory)}
+                      />
+                    </View>
+                  </Card>
+                ))
+              )}
             </Section>
 
             <Section
@@ -168,7 +305,7 @@ export default function SettingsScreen() {
 
             <Section title="关于">
               <Card style={styles.about}>
-                <Text style={styles.aboutTitle}>AI 阅读助手 · M0-B</Text>
+                <Text style={styles.aboutTitle}>AI 阅读助手 · M2</Text>
                 <Text style={styles.aboutBody}>
                   本地优先：书籍、索引、会话、划线全部保存在设备私有目录与 SQLite，
                   不设账号、不上传服务器。API Key 仅存于 SecureStore。
@@ -213,6 +350,14 @@ const styles = StyleSheet.create({
   rowLabel: { ...type.small },
   rowValue: { ...type.small, color: colors.text, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
   note: { ...type.tiny, color: colors.warn, marginTop: spacing.xs },
+  rebuildCard: { gap: spacing.sm },
+  memoryCard: { gap: spacing.sm },
+  memoryText: { ...type.body, color: colors.text },
+  memoryFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   about: { gap: spacing.sm },
   aboutTitle: { ...type.h2 },
   aboutBody: { ...type.small },

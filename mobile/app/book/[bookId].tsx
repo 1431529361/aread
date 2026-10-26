@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,11 +22,13 @@ import {
   type HighlightRecord,
 } from '../../src/db/repositories/highlights';
 import { getDatabase } from '../../src/db/client';
-import { loadBookContent } from '../../src/services/bookContent';
-import { loadEpubDocuments } from '../../src/services/epubContent';
-import { chunkEpubDocuments } from '../../src/core/rag/epubChunks';
 import { deleteBookCompletely } from '../../src/services/bookImport';
-import { indexBook, type IndexProgress } from '../../src/services/indexing';
+import { type IndexProgress } from '../../src/services/indexing';
+import {
+  runBookVectorIndex,
+  runtimeEmbedSig,
+} from '../../src/services/indexRuntime';
+import { loadEmbeddingRuntime } from '../../src/services/providerRuntime';
 import { useAppStore } from '../../src/stores/appStore';
 import { Badge, Button, Card, Divider, EmptyState, ProgressBar, Section } from '../../src/components/ui';
 import {
@@ -56,11 +58,17 @@ export default function BookDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [indexing, setIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
+  const [activeEmbedSig, setActiveEmbedSig] = useState<string | null>(null);
+  const indexAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
     try {
       const db = getDatabase();
-      const found = await getBook(db, { userId: 'local', bookId });
+      const [found, embedding] = await Promise.all([
+        getBook(db, { userId: 'local', bookId }),
+        loadEmbeddingRuntime(db),
+      ]);
+      setActiveEmbedSig(embedding ? runtimeEmbedSig(embedding) : null);
       if (!found) {
         setError('书籍不存在或已被删除');
         setBook(null);
@@ -87,46 +95,37 @@ export default function BookDetailScreen() {
     }, [load]),
   );
 
+  useEffect(() => () => indexAbortRef.current?.abort(), []);
+
   async function handleIndex(): Promise<void> {
-    if (!book) return;
+    if (!book || !activeEmbedSig) return;
+    const controller = new AbortController();
+    indexAbortRef.current = controller;
     setIndexing(true);
     setIndexProgress(null);
     try {
-      const db = getDatabase();
-      const content = await loadBookContent(book);
-      if (content.format === 'epub' && content.epub) {
-        const documents = await loadEpubDocuments(content.epub);
-        const charCount = documents.reduce((sum, doc) => sum + doc.text.length, 0);
-        await indexBook({
-          db,
-          userId: 'local',
-          bookId: book.id,
-          chunks: chunkEpubDocuments(documents),
-          charCount,
-          embed: null,
-          onProgress: setIndexProgress,
-        });
-      } else {
-        const text = content.text ?? '';
-        await indexBook({
-          db,
-          userId: 'local',
-          bookId: book.id,
-          content: text,
-          charCount: text.length,
-          strategy: 'parent-child',
-          embed: null,
-          onProgress: setIndexProgress,
-        });
-      }
+      await runBookVectorIndex({
+        db: getDatabase(),
+        userId: 'local',
+        bookId: book.id,
+        signal: controller.signal,
+        onProgress: setIndexProgress,
+      });
       bumpLibrary();
       await load();
     } catch (caught) {
-      Alert.alert('索引失败', caught instanceof Error ? caught.message : String(caught));
+      if (!controller.signal.aborted) {
+        Alert.alert('索引失败', caught instanceof Error ? caught.message : String(caught));
+      }
     } finally {
+      indexAbortRef.current = null;
       setIndexing(false);
       setIndexProgress(null);
     }
+  }
+
+  function handlePauseIndex(): void {
+    indexAbortRef.current?.abort();
   }
 
   async function handleAsk(): Promise<void> {
@@ -227,6 +226,8 @@ export default function BookDetailScreen() {
   }
 
   const status = indexStatusMeta(book.indexStatus);
+  const vectorReady =
+    book.indexStatus === 'ready' && !!activeEmbedSig && book.embedSig === activeEmbedSig;
   const progressPercent = indexing && indexProgress
     ? indexProgress.percent / 100
     : book.indexProgress;
@@ -292,30 +293,41 @@ export default function BookDetailScreen() {
           </View>
         </Card>
 
-        <Section title="检索索引" hint="词法索引负责离线搜索、证据召回与引用跳转">
+        <Section title="检索索引" hint="关键词检索离线可用；向量索引启用语义召回与跨书问答">
           <Card style={styles.indexCard}>
             <View style={styles.indexHeader}>
-              <Badge label={status.label} tone={status.tone} />
+              <Badge
+                label={
+                  vectorReady
+                    ? '向量已就绪'
+                    : activeEmbedSig
+                      ? status.label
+                      : '关键词模式'
+                }
+                tone={vectorReady ? 'success' : status.tone}
+              />
               <Text style={styles.indexPercent}>{formatPercent(progressPercent)}</Text>
             </View>
             <ProgressBar value={progressPercent} />
             <Text style={styles.indexHint}>
-              {status.searchable
-                ? '已完成分块与词法索引，可在飞行模式下搜索和问答。'
-                : '尚未完成索引；重建后即可使用搜索与基于原文的问答。'}
+              {!activeEmbedSig
+                ? '尚未配置向量模型，当前使用关键词检索；阅读和离线搜索不受影响。'
+                : vectorReady
+                  ? '当前向量配置已完成，可使用混合检索。'
+                  : '索引会每批保存进度；暂停、杀进程或网络失败后可从未完成分块继续。'}
             </Text>
             {indexing && indexProgress ? (
               <Text style={styles.indexStage}>
-                正在{indexProgress.stage === 'chunking' ? '分块' : '写入索引'} ·{' '}
-                {indexProgress.done}/{indexProgress.total}
+                正在向量化 · {indexProgress.done}/{indexProgress.total}
               </Text>
             ) : null}
-            <Button
-              title={indexing ? '重建中…' : status.searchable ? '重建检索索引' : '建立检索索引'}
-              variant="secondary"
-              loading={indexing}
-              onPress={() => void handleIndex()}
-            />
+            {activeEmbedSig && !vectorReady ? (
+              <Button
+                title={indexing ? '暂停索引' : book.indexStatus === 'partial' || book.indexStatus === 'embedding' ? '继续向量索引' : '建立向量索引'}
+                variant="secondary"
+                onPress={indexing ? handlePauseIndex : () => void handleIndex()}
+              />
+            ) : null}
           </Card>
         </Section>
 

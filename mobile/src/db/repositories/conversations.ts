@@ -137,7 +137,13 @@ export async function createConversation(
   const bookId = params.bookId ?? null;
 
   await db.transaction(async (tx) => {
-    if (bookId) {
+    if (scope === 'library') {
+      await tx.execute(
+        `UPDATE conversations SET status = 'archived', updated_at = ?
+         WHERE user_id = ? AND scope = 'library' AND status = 'active'`,
+        [now, params.userId],
+      );
+    } else if (bookId) {
       await tx.execute(
         `UPDATE conversations SET status = 'archived', updated_at = ?
          WHERE user_id = ? AND book_id = ? AND scope = ? AND status = 'active'`,
@@ -187,6 +193,38 @@ export async function getOrCreateBookConversation(
     bookId: params.bookId,
     scope: 'book',
   });
+}
+
+export async function getOrCreateLibraryConversation(
+  db: DbAdapter,
+  userId: string,
+): Promise<ConversationRecord> {
+  const row = await db.queryOne<ConversationRow>(
+    `SELECT * FROM conversations
+     WHERE user_id = ? AND scope = 'library' AND status = 'active'
+     ORDER BY updated_at DESC LIMIT 1`,
+    [userId],
+  );
+  if (row) return mapConversation(row);
+  return createConversation(db, {
+    userId,
+    bookId: null,
+    scope: 'library',
+    title: '书库问答',
+  });
+}
+
+export async function listLibraryConversations(
+  db: DbAdapter,
+  userId: string,
+): Promise<ConversationRecord[]> {
+  const rows = await db.queryAll<ConversationRow>(
+    `SELECT * FROM conversations
+     WHERE user_id = ? AND scope = 'library'
+     ORDER BY updated_at DESC`,
+    [userId],
+  );
+  return rows.map(mapConversation);
 }
 
 export async function listMessages(

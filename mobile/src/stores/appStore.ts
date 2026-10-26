@@ -8,6 +8,7 @@ import {
   type StreamingMode,
 } from '../services/llmRuntime';
 import type { ReaderTheme } from '../reader/readerHtml';
+import { resumeInterruptedVectorIndexes } from '../services/indexRuntime';
 
 export interface ReaderPrefs {
   theme: ReaderTheme;
@@ -63,6 +64,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           fts5,
           streaming: getStreamingMode(),
           readerPrefs: { ...DEFAULT_READER_PREFS, ...prefs },
+        });
+        void resumeInterruptedVectorIndexes(db).catch(() => {
+          // 续跑失败会由索引状态记录，不能阻塞 App 启动
         });
       } catch (error) {
         initPromise = null;

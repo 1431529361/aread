@@ -35,10 +35,11 @@ export function openSearch(bookId: string, query?: string): void {
 
 export function openChat(
   conversationId: string,
-  bookId: string,
+  bookId?: string | null,
   selectedText?: string | null,
 ): void {
-  const params: RouteParams = { conversationId, bookId };
+  const params: RouteParams = { conversationId };
+  if (bookId) params.bookId = bookId;
   if (selectedText?.trim()) params.selectedText = selectedText.trim();
   push('/chat/[conversationId]', params);
 }

@@ -166,15 +166,20 @@ describe('indexBook', () => {
     expect(hits).toHaveLength(25);
 
     const retry = embedWithSig('sig-a');
+    const progress: Array<{ done: number; total: number }> = [];
     const resumed = await indexBook({
       db,
       userId: LOCAL_USER_ID,
       bookId: 'b1',
       mode: 'embedding',
       embed: retry,
+      onProgress: (value) => progress.push(value),
     });
 
     expect(resumed.status).toBe('ready');
+    expect(progress[0]).toMatchObject({ done: 10, total: 25 });
+    expect(progress.at(-1)).toMatchObject({ done: 25, total: 25 });
+    expect(progress.every((value) => value.done <= value.total)).toBe(true);
     expect(retry.calls()).toBe(2);
     expect(await countVectorsForBookSig(db, { bookId: 'b1', embedSig: 'sig-a' })).toBe(25);
     close();

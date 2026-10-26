@@ -104,8 +104,15 @@ async function vectorCandidatesInLibrary(
     byBook.set(chunk.bookId, ids);
   }
 
+  const activeRows = await db.queryAll<{ id: string }>(
+    `SELECT id FROM books_meta
+     WHERE embed_sig = ? AND index_status = 'ready'`,
+    [params.embedSig],
+  );
+  const activeBooks = new Set(activeRows.map((row) => row.id));
   const results: RankedChunk[] = [];
-  for (const chunkIds of byBook.values()) {
+  for (const [bookId, chunkIds] of byBook) {
+    if (!activeBooks.has(bookId)) continue;
     const vectors = await loadVectorsForChunks(db, {
       chunkIds,
       embedSig: params.embedSig,

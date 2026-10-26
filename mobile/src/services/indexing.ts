@@ -306,7 +306,7 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
   const total = storedChunks.length;
   const workTotal = pending.length;
 
-  let done = 0;
+  let done = total - workTotal;
   let lastError: string | null = null;
   let aborted = false;
 
@@ -317,13 +317,13 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
       bookId,
       userId,
       stage: 'embedding',
-      progress: baseProgress,
-      cursor: 0,
+      progress: baseProgress + 0.7 * (done / Math.max(1, total)),
+      cursor: done,
       embedSig: keepSig,
       embedDims: keepDims,
       onProgress,
-      done: 0,
-      total: workTotal,
+      done,
+      total,
     });
   }
 
@@ -360,7 +360,7 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
       break;
     }
 
-    const progress = baseProgress + 0.7 * (done / workTotal);
+    const progress = baseProgress + 0.7 * (done / Math.max(1, total));
     await updateJob(db, {
       bookId,
       stage: 'embedding',
@@ -370,7 +370,7 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
     report(onProgress, {
       stage: 'embedding',
       done,
-      total: workTotal,
+      total,
       percent: Math.round(progress * 100),
     });
   }

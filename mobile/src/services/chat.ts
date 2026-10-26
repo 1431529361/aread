@@ -9,15 +9,27 @@ import {
 } from '../db/repositories/conversations';
 import { runAgentLoop, type AgentEvent } from '../core/agent/loop';
 import { buildAgentSystemPrompt, buildAgentUserMessage } from '../core/llm/prompts/agent';
+import { complete, type ChatMessage } from '../core/llm/client';
 import { selectHistoryMessages } from '../core/conversation/history';
-import type { ChatMessage } from '../core/llm/client';
 import type { Evidence, RetrievalHit } from '../core/types';
 import { loadBookContentById } from './bookContent';
-import { retrieveInBook } from './retrieval';
+import { retrieveInBook, retrieveInLibrary } from './retrieval';
 import { createNativeLlmAdapter, nativeFetch } from './llmRuntime';
-import { loadChatRuntime, loadEmbeddingRuntime } from './providerRuntime';
+import {
+  loadChatRuntime,
+  loadEmbeddingRuntime,
+  type ChatRuntime,
+  type EmbeddingRuntime,
+} from './providerRuntime';
 import { buildReranker } from './providerSettings';
 import { embedTexts } from '../core/embedding/client';
+import { computeEmbedSig } from '../core/embedding/signature';
+import {
+  buildMemoryInjection,
+  extractAndMergeMemories,
+  maybeExtractAndMergeMemories,
+} from './memory';
+import { searchLibraryTool } from '../core/agent/tools/searchLibrary';
 
 export class ChatNotConfiguredError extends Error {
   constructor() {
@@ -49,16 +61,99 @@ function composeUserContent(question: string, selectedText?: string | null): str
   return `选中的文本：\n"${selectedText.trim()}"\n\n问题：${trimmed}`;
 }
 
+function memoryOptions(
+  db: DbAdapter,
+  userId: string,
+  chatRuntime: ChatRuntime,
+  embedding: EmbeddingRuntime | null,
+) {
+  return {
+    db,
+    userId,
+    llm: {
+      complete: (prompt: string, options?: { maxTokens?: number; temperature?: number }) =>
+        complete(chatRuntime.config, prompt, {
+          ...options,
+          fetchImpl: nativeFetch,
+          retries: 1,
+          timeoutMs: 30000,
+        }),
+    },
+    embedder: embedding
+      ? {
+          embedTexts: (texts: readonly string[]) =>
+            embedTexts(embedding.config, texts, {
+              fetchImpl: nativeFetch,
+              retries: 1,
+              timeoutMs: 15000,
+            }),
+        }
+      : null,
+  };
+}
+
+async function injectMemories(params: {
+  db: DbAdapter;
+  userId: string;
+  runtime: ChatRuntime;
+  embedding: EmbeddingRuntime | null;
+  query: string;
+}): Promise<string> {
+  try {
+    const injection = await buildMemoryInjection(
+      memoryOptions(params.db, params.userId, params.runtime, params.embedding),
+      { query: params.query },
+    );
+    return injection.text;
+  } catch {
+    return '';
+  }
+}
+
+function scheduleMemoryExtraction(params: {
+  db: DbAdapter;
+  userId: string;
+  runtime: ChatRuntime;
+  embedding: EmbeddingRuntime | null;
+  conversationId: string;
+  messages: readonly MessageRecord[];
+  sourceMessageId: number;
+}): void {
+  const userTurns = params.messages.filter((message) => message.role === 'user').length;
+  if (userTurns === 0 || userTurns % 6 !== 0) return;
+  void maybeExtractAndMergeMemories(
+    memoryOptions(params.db, params.userId, params.runtime, params.embedding),
+    {
+      conversationId: params.conversationId,
+      messages: params.messages,
+      sourceMessageId: params.sourceMessageId,
+      userTurnsSinceExtract: 6,
+      idleMs: 0,
+    },
+  ).catch(() => {
+    // 记忆整理不得阻塞或破坏对话主流程
+  });
+}
+
 async function buildRetriever(params: {
   db: DbAdapter;
   book: BookRecord;
 }): Promise<(query: string) => Promise<RetrievalHit[]>> {
   const { db, book } = params;
   const embedding = await loadEmbeddingRuntime(db);
+  const currentSig = embedding
+    ? computeEmbedSig({
+        baseUrl: embedding.record.baseUrl,
+        model: embedding.record.model,
+        dimensionsParam: embedding.record.dimensionsParam,
+        dims: embedding.record.dims ?? 1024,
+      })
+    : null;
   const canUseVectors =
     embedding != null &&
     book.indexStatus === 'ready' &&
     !!book.embedSig &&
+    book.embedSig === currentSig &&
     (book.embedDims ?? 1024) === 1024;
 
   const reranker =
@@ -107,6 +202,7 @@ export async function sendBookChat(params: SendBookChatParams): Promise<SendBook
 
   const runtime = await loadChatRuntime(db);
   if (!runtime) throw new ChatNotConfiguredError();
+  const embedding = await loadEmbeddingRuntime(db);
 
   const { book, text } = await loadBookContentById(db, { userId, bookId });
   const priorMessages = await listMessages(db, conversationId);
@@ -127,6 +223,14 @@ export async function sendBookChat(params: SendBookChatParams): Promise<SendBook
   if (conversation.summary.trim()) {
     system += `\n\n【当前会话的历史摘要】\n${conversation.summary.trim()}`;
   }
+  const memoryText = await injectMemories({
+    db,
+    userId,
+    runtime,
+    embedding,
+    query: question,
+  });
+  if (memoryText) system += `\n\n${memoryText}`;
 
   const messages: ChatMessage[] = [
     { role: 'system', content: system },
@@ -172,5 +276,177 @@ export async function sendBookChat(params: SendBookChatParams): Promise<SendBook
     citations: result.evidence.length > 0 ? result.evidence : null,
   });
 
+  scheduleMemoryExtraction({
+    db,
+    userId,
+    runtime,
+    embedding,
+    conversationId,
+    messages: [...priorMessages, userMessage, assistantMessage],
+    sourceMessageId: userMessage.id,
+  });
+
   return { userMessage, assistantMessage, evidence: result.evidence };
+}
+
+export interface SendLibraryChatParams {
+  db: DbAdapter;
+  userId?: string;
+  conversationId: string;
+  question: string;
+  signal?: AbortSignal;
+  onEvent?: (event: AgentEvent) => void;
+}
+
+async function buildLibraryRetriever(
+  db: DbAdapter,
+  embedding: EmbeddingRuntime | null,
+): Promise<(query: string) => Promise<RetrievalHit[]>> {
+  const activeSig = embedding
+    ? computeEmbedSig({
+        baseUrl: embedding.record.baseUrl,
+        model: embedding.record.model,
+        dimensionsParam: embedding.record.dimensionsParam,
+        dims: embedding.record.dims ?? 1024,
+      })
+    : null;
+  const reranker = embedding
+    ? buildReranker(embedding.record, embedding.apiKey, { fetchImpl: nativeFetch })
+    : null;
+
+  return async (query: string) => {
+    if (!query.trim()) return [];
+    return retrieveInLibrary({
+      db,
+      query,
+      topK: 8,
+      recallN: 20,
+      expandParents: true,
+      activeSig,
+      dims: embedding?.record.dims ?? 1024,
+      embedQuery: embedding
+        ? async (text) => {
+            const vectors = await embedTexts(embedding.config, [text], {
+              fetchImpl: nativeFetch,
+              retries: 1,
+              timeoutMs: 15000,
+            });
+            return vectors[0] ?? [];
+          }
+        : null,
+      rerank: reranker,
+    });
+  };
+}
+
+export async function sendLibraryChat(
+  params: SendLibraryChatParams,
+): Promise<SendBookChatResult> {
+  const { db, conversationId, signal } = params;
+  const userId = params.userId ?? LOCAL_USER_ID;
+  const question = params.question.trim();
+  if (!question) throw new Error('问题不能为空');
+
+  const conversation = await getConversation(db, { userId, conversationId });
+  if (!conversation || conversation.scope !== 'library') {
+    throw new Error('书库会话不存在');
+  }
+
+  const runtime = await loadChatRuntime(db);
+  if (!runtime) throw new ChatNotConfiguredError();
+  const embedding = await loadEmbeddingRuntime(db);
+  const priorMessages = await listMessages(db, conversationId);
+  const userMessage = await appendMessage(db, {
+    conversationId,
+    role: 'user',
+    content: question,
+  });
+
+  const history = selectHistoryMessages(priorMessages, {
+    maxMessages: 20,
+    maxChars: Math.min(60000, Math.max(6000, Math.floor(runtime.contextWindow * 0.3))),
+  });
+  let system = buildAgentSystemPrompt({
+    model: runtime.record.model,
+    scope: 'library',
+  });
+  if (conversation.summary.trim()) {
+    system += `\n\n【当前会话的历史摘要】\n${conversation.summary.trim()}`;
+  }
+  const memoryText = await injectMemories({
+    db,
+    userId,
+    runtime,
+    embedding,
+    query: question,
+  });
+  if (memoryText) system += `\n\n${memoryText}`;
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: system },
+    ...history.map((message) => ({ role: message.role, content: message.content })),
+    { role: 'user', content: `问题：${question}\n（请检索整个书库，引用中注明书名）` },
+  ];
+  const retrieve = await buildLibraryRetriever(db, embedding);
+  const result = await runAgentLoop({
+    config: runtime.config,
+    messages,
+    question,
+    tools: [searchLibraryTool],
+    context: {
+      db,
+      userId,
+      bookId: '',
+      bookName: '整个书库',
+      retrieve,
+      searchLibrary: retrieve,
+    },
+    retrieve,
+    llm: createNativeLlmAdapter(),
+    onEvent: params.onEvent,
+    signal,
+    evidenceMaxItems: 8,
+    evidenceMaxChars: 5000,
+  });
+
+  const assistantMessage = await appendMessage(db, {
+    conversationId,
+    role: 'assistant',
+    content: result.content,
+    citations: result.evidence.length > 0 ? result.evidence : null,
+  });
+  scheduleMemoryExtraction({
+    db,
+    userId,
+    runtime,
+    embedding,
+    conversationId,
+    messages: [...priorMessages, userMessage, assistantMessage],
+    sourceMessageId: userMessage.id,
+  });
+  return { userMessage, assistantMessage, evidence: result.evidence };
+}
+
+export async function extractConversationMemoriesOnEnd(params: {
+  db: DbAdapter;
+  conversationId: string;
+  userId?: string;
+}): Promise<void> {
+  const userId = params.userId ?? LOCAL_USER_ID;
+  const [runtime, embedding, messages] = await Promise.all([
+    loadChatRuntime(params.db),
+    loadEmbeddingRuntime(params.db),
+    listMessages(params.db, params.conversationId),
+  ]);
+  if (!runtime) return;
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user');
+  if (!lastUser) return;
+  await extractAndMergeMemories(
+    memoryOptions(params.db, userId, runtime, embedding),
+    {
+      conversationId: params.conversationId,
+      messages,
+      sourceMessageId: lastUser.id,
+    },
+  );
 }

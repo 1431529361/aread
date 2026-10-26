@@ -75,8 +75,8 @@ describe('parseAdjudicationDecisions', () => {
 });
 
 describe('shouldExtractMemories', () => {
-  it('累计 10 轮触发', () => {
-    expect(shouldExtractMemories({ userTurnsSinceExtract: 10, idleMs: 0 })).toEqual({
+  it('累计 6 轮触发', () => {
+    expect(shouldExtractMemories({ userTurnsSinceExtract: 6, idleMs: 0 })).toEqual({
       due: true,
       reason: 'turns',
     });
@@ -90,7 +90,7 @@ describe('shouldExtractMemories', () => {
 
   it('未到门槛不触发', () => {
     expect(
-      shouldExtractMemories({ userTurnsSinceExtract: 9, idleMs: 4 * 60 * 1000 }),
+      shouldExtractMemories({ userTurnsSinceExtract: 5, idleMs: 4 * 60 * 1000 }),
     ).toEqual({ due: false, reason: 'not_due' });
   });
 });

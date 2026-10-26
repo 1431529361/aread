@@ -24,7 +24,9 @@ import {
 import { getDatabase } from '../../src/db/client';
 import {
   ChatNotConfiguredError,
+  extractConversationMemoriesOnEnd,
   sendBookChat,
+  sendLibraryChat,
 } from '../../src/services/chat';
 import type { Evidence } from '../../src/core/types';
 import type { AgentEvent } from '../../src/core/agent/loop';
@@ -87,7 +89,8 @@ function CitationCard({
       style={({ pressed }) => [styles.citationCard, pressed && styles.pressed]}
     >
       <Text style={styles.citationLabel} numberOfLines={1}>
-        [{evidence.citationId}] {evidence.hit.chapter || '正文'} · 跳到原文 ›
+        [{evidence.citationId}] {evidence.hit.bookTitle ? `《${evidence.hit.bookTitle}》 · ` : ''}
+        {evidence.hit.chapter || '正文'} · 跳到原文 ›
       </Text>
       <Text style={styles.citationText} numberOfLines={3}>
         {evidence.hit.text}
@@ -159,8 +162,16 @@ export default function ChatScreen() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      try {
+        const db = getDatabase();
+        void extractConversationMemoriesOnEnd({ db, conversationId }).catch(() => {
+          // 会话结束时的记忆整理不影响退出
+        });
+      } catch {
+        // 数据库已关闭时无需整理
+      }
     };
-  }, []);
+  }, [conversationId]);
 
   function handleEvent(event: AgentEvent): void {
     switch (event.type) {
@@ -209,14 +220,12 @@ export default function ChatScreen() {
 
     try {
       const db = getDatabase();
-      const result = await sendBookChat({
+      const common = {
         db,
         conversationId,
-        bookId,
         question,
-        selectedText: quote,
         signal: controller.signal,
-        onEvent: (event) => {
+        onEvent: (event: AgentEvent) => {
           if (event.type === 'chunk') {
             partial += event.content;
             setStreaming(partial);
@@ -225,7 +234,14 @@ export default function ChatScreen() {
           }
           handleEvent(event);
         },
-      });
+      };
+      const result = conversation.scope === 'library'
+        ? await sendLibraryChat(common)
+        : await sendBookChat({
+            ...common,
+            bookId: conversation.bookId ?? bookId,
+            selectedText: quote,
+          });
 
       setMessages((current) => [
         ...current,
@@ -286,7 +302,9 @@ export default function ChatScreen() {
   }
 
   function handleJump(evidence: Evidence): void {
-    openReader(bookId, evidence.hit.loc, { flash: true });
+    openReader(evidence.hit.bookId || conversation?.bookId || bookId, evidence.hit.loc, {
+      flash: true,
+    });
   }
 
   if (loading) {
@@ -319,7 +337,11 @@ export default function ChatScreen() {
         <SafeAreaView style={styles.safe} edges={['bottom']}>
           <View style={styles.contextBar}>
             <Text style={styles.contextText} numberOfLines={1}>
-              {book ? `《${book.title}》` : '本书'} · 仅基于原文回答
+              {conversation.scope === 'library'
+                ? '整个书库 · 跨书检索并引用原文'
+                : book
+                  ? `《${book.title}》 · 仅基于原文回答`
+                  : '本书 · 仅基于原文回答'}
             </Text>
           </View>
 
@@ -334,9 +356,13 @@ export default function ChatScreen() {
           >
             {messages.length === 0 && !pendingUser ? (
               <View style={styles.intro}>
-                <Text style={styles.introTitle}>关于这本书，问点什么？</Text>
+                <Text style={styles.introTitle}>
+                  {conversation.scope === 'library' ? '在整个书库中问点什么？' : '关于这本书，问点什么？'}
+                </Text>
                 <Text style={styles.introBody}>
-                  回答会附上原文引用，点击 [Cn] 或引用卡片即可跳回对应段落。
+                  {conversation.scope === 'library'
+                    ? '系统会先跨书粗筛，再按书做向量精排；引用会标明书名并可跳回原文。'
+                    : '回答会附上原文引用，点击 [Cn] 或引用卡片即可跳回对应段落。'}
                 </Text>
                 {quote ? (
                   <Text style={styles.introQuote}>已选中：“{quote.slice(0, 80)}…”</Text>
@@ -463,7 +489,13 @@ export default function ChatScreen() {
               <TextInput
                 value={input}
                 onChangeText={setInput}
-                placeholder={sending ? '正在回答…' : '针对这本书提问'}
+                placeholder={
+                  sending
+                    ? '正在回答…'
+                    : conversation.scope === 'library'
+                      ? '针对整个书库提问'
+                      : '针对这本书提问'
+                }
                 placeholderTextColor={colors.textFaint}
                 style={styles.input}
                 multiline
@@ -474,7 +506,10 @@ export default function ChatScreen() {
                 title={sending ? '停止' : '发送'}
                 variant={sending ? 'danger' : 'primary'}
                 onPress={sending ? handleStop : () => void handleSend()}
-                disabled={!sending && (!input.trim() || !book)}
+                disabled={
+                  !sending &&
+                  (!input.trim() || (conversation.scope === 'book' && !book))
+                }
                 style={styles.sendButton}
               />
             </View>
