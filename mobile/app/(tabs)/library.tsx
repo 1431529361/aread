@@ -30,7 +30,6 @@ import { openBookDetail, openChat, openReader, openSettings } from '../../src/na
 import { colors, radius, spacing, type } from '../../src/theme';
 
 export default function LibraryScreen() {
-  const libraryVersion = useAppStore((state) => state.libraryVersion);
   const bumpLibrary = useAppStore((state) => state.bumpLibrary);
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [chatReady, setChatReady] = useState(true);
@@ -65,7 +64,7 @@ export default function LibraryScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load, libraryVersion]),
+    }, [load]),
   );
 
   async function handleImport(): Promise<void> {

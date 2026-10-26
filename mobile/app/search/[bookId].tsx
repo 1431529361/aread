@@ -30,7 +30,7 @@ export default function SearchScreen() {
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<BookSearchResult[]>([]);
   const [searched, setSearched] = useState(false);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(Boolean(initialQuery.trim()));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,18 +38,31 @@ export default function SearchScreen() {
     void (async () => {
       try {
         const db = getDatabase();
-        const found = await getBook(db, { userId: 'local', bookId });
-        if (!cancelled) setBook(found);
+        const trimmed = initialQuery.trim();
+        const [found, initialResults] = await Promise.all([
+          getBook(db, { userId: 'local', bookId }),
+          trimmed
+            ? searchBookKeyword(db, { bookId, query: trimmed, limit: 30 })
+            : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        setBook(found);
+        if (initialResults) {
+          setResults(initialResults);
+          setSearched(true);
+          setSearching(false);
+        }
       } catch (caught) {
         if (!cancelled) {
           setError(caught instanceof Error ? caught.message : String(caught));
+          setSearching(false);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [bookId]);
+  }, [bookId, initialQuery]);
 
   const runSearch = useCallback(
     async (value: string) => {
@@ -78,10 +91,6 @@ export default function SearchScreen() {
     },
     [bookId],
   );
-
-  useEffect(() => {
-    if (initialQuery.trim()) void runSearch(initialQuery);
-  }, [initialQuery, runSearch]);
 
   const searchable = book ? indexStatusMeta(book.indexStatus).searchable : false;
 

@@ -176,6 +176,7 @@ export default function SettingsScreen() {
             >
               <Card>
                 <ProviderForm
+                  key={`chat-${chatRecord?.updatedAt ?? 'new'}`}
                   db={getDatabase()}
                   kind="chat"
                   record={chatRecord}
@@ -190,6 +191,7 @@ export default function SettingsScreen() {
             >
               <Card>
                 <ProviderForm
+                  key={`embedding-${embeddingRecord?.updatedAt ?? 'new'}`}
                   db={getDatabase()}
                   kind="embedding"
                   record={embeddingRecord}

@@ -58,15 +58,6 @@ export function ProviderForm({ db, kind, record, onSaved }: ProviderFormProps) {
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
 
   useEffect(() => {
-    setBaseUrl(record?.baseUrl ?? '');
-    setModel(record?.model ?? '');
-    setSavedKeyMask(record?.maskedKey ?? null);
-    setContextWindow(String(record?.contextWindow ?? 200000));
-    setDimensionsParam(record?.dimensionsParam == null ? '' : String(record.dimensionsParam));
-    setRerankModel(record?.rerankModel ?? '');
-  }, [record]);
-
-  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const key = await getApiKey(kind);

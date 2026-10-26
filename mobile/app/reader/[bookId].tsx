@@ -142,12 +142,17 @@ export default function ReaderScreen() {
   const [toast, setToast] = useState<string | null>(null);
 
   const prefsRef = useRef<ReaderPrefs>(readerPrefs);
-  prefsRef.current = readerPrefs;
+
+  useEffect(() => {
+    prefsRef.current = readerPrefs;
+  }, [readerPrefs]);
 
   const chrome = chromeFor(readerPrefs.theme);
   const isEpub = epub != null;
 
-  chapterIndexRef.current = chapterIndex;
+  useEffect(() => {
+    chapterIndexRef.current = chapterIndex;
+  }, [chapterIndex]);
 
   const inject = useCallback((code: string) => {
     webRef.current?.injectJavaScript(`${code};
@@ -246,7 +251,7 @@ true;`);
         setChapterLoading(false);
       }
     },
-    [book?.title, chapterHighlights],
+    [book, chapterHighlights],
   );
 
   useEffect(() => {
@@ -576,6 +581,7 @@ true;`);
         };
       });
     }
+    const textLength = chapters.length > 0 ? chapters[chapters.length - 1].end : 0;
     return chapters.map((chapter) => ({
       key: `${chapter.index}-${chapter.start}`,
       title: chapter.title || '未命名章节',
@@ -583,8 +589,8 @@ true;`);
       start: chapter.start,
       end: chapter.end,
       percent:
-        textLengthRef.current > 0
-          ? Math.round((chapter.start / textLengthRef.current) * 100)
+        textLength > 0
+          ? Math.round((chapter.start / textLength) * 100)
           : 0,
     }));
   }, [chapters, epub, isEpub]);

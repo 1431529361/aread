@@ -166,6 +166,7 @@ export default function OnboardingScreen() {
               <Section title="对话模型" hint="必填，划词提问与引用回答都依赖它">
                 <Card>
                   <ProviderForm
+                    key={`chat-${chatRecord?.updatedAt ?? 'new'}`}
                     db={getDatabase()}
                     kind="chat"
                     record={chatRecord}
@@ -193,6 +194,7 @@ export default function OnboardingScreen() {
               <Section title="向量模型" hint="必须返回 1024 维；保存前会自动实测">
                 <Card>
                   <ProviderForm
+                    key={`embedding-${embeddingRecord?.updatedAt ?? 'new'}`}
                     db={getDatabase()}
                     kind="embedding"
                     record={embeddingRecord}
