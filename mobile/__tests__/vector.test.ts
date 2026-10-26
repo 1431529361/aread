@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bytesToVector,
+  centroidVector,
   cosineSimilarity,
   dotProduct,
   normalizeVector,
@@ -45,6 +46,15 @@ describe('vector', () => {
     expect(hits.map((hit) => hit.chunkId)).toEqual(['a', 'b', 'c']);
     expect(hits[0].score).toBeCloseTo(1, 6);
     expect(hits[2].score).toBeCloseTo(0, 6);
+  });
+
+  it('书级 centroid 忽略错误维度并返回归一化均值方向', () => {
+    const centroid = centroidVector([[1, 0], [0, 1], [1, 2, 3]], 2);
+
+    expect(centroid).not.toBeNull();
+    expect(centroid?.[0]).toBeCloseTo(Math.SQRT1_2, 6);
+    expect(centroid?.[1]).toBeCloseTo(Math.SQRT1_2, 6);
+    expect(centroidVector([], 2)).toBeNull();
   });
 
   it('float32 BLOB 往返', () => {

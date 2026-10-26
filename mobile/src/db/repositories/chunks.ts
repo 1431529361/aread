@@ -68,6 +68,7 @@ export async function writeLexicalIndex(
     await tx.execute('DELETE FROM rag_fts WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_lexical WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_vectors WHERE book_id = ?', [bookId]);
+    await tx.execute('DELETE FROM rag_book_vectors WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_chunks WHERE book_id = ?', [bookId]);
 
     const useFts = isFts5Available();
@@ -117,6 +118,7 @@ export async function deleteBookIndexData(db: DbAdapter, bookId: string): Promis
     await tx.execute('DELETE FROM rag_fts WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_lexical WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_vectors WHERE book_id = ?', [bookId]);
+    await tx.execute('DELETE FROM rag_book_vectors WHERE book_id = ?', [bookId]);
     await tx.execute('DELETE FROM rag_chunks WHERE book_id = ?', [bookId]);
   });
 }

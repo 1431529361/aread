@@ -10,6 +10,7 @@ import { getApiKey, maskApiKey } from '../services/secureStore';
 import {
   buildChatConfig,
   buildEmbeddingConfig,
+  requireHttpsBaseUrl,
 } from '../services/providerSettings';
 import { saveProvider } from '../services/providerRuntime';
 import {
@@ -94,8 +95,10 @@ export function ProviderForm({ db, kind, record, onSaved }: ProviderFormProps) {
   );
 
   function validate(): string | null {
-    if (!/^https?:\/\/\S+/i.test(baseUrl.trim())) {
-      return 'Base URL 需要以 http:// 或 https:// 开头';
+    try {
+      requireHttpsBaseUrl(baseUrl);
+    } catch {
+      return 'Base URL 必须以 https:// 开头，避免书籍内容与 API Key 明文传输';
     }
     if (!model.trim()) return isChat ? '请填写对话模型名' : '请填写向量模型名';
     if (!apiKey.trim() && !savedKeyMask) return '请填写 API Key';
@@ -184,7 +187,7 @@ export function ProviderForm({ db, kind, record, onSaved }: ProviderFormProps) {
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
-        hint="只填写前缀，末尾斜杠会自动去掉；请求会拼到 /chat/completions 或 /embeddings"
+        hint="只填写 HTTPS 前缀，末尾斜杠会自动去掉；请求会拼到 /chat/completions 或 /embeddings"
       />
       <TextField
         label="Model"

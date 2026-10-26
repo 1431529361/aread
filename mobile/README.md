@@ -1,6 +1,6 @@
 # AI 阅读助手（Android / Expo）
 
-本地优先的 Android 阅读助手：书籍、索引、会话、笔记、记忆全部存在设备本地；不设账号、服务器与云同步。
+本地优先的 Android 阅读助手：书籍、索引、会话、笔记、记忆默认保存在设备本地，不设账号、自有服务器与云同步。使用 AI 时，对话、查询和必要书籍片段会发送到用户配置的第三方 HTTPS 端点。
 完整交接方案见 [`../docs/android-app-spec.md`](../docs/android-app-spec.md)。
 
 ## 当前进度
@@ -17,14 +17,15 @@
   - DRM：`META-INF/rights.xml` 或正文加密直接拒绝；仅字体混淆（IDPF / Adobe）放行
 - **M1 统一 locator**：`{kind:'txt'|'epub', href, start, end}`；TXT offset 相对归一化全文，EPUB offset 相对各 spine 文档消毒后的纯文本；划线与引用都按 `href + offset` 跳回原文
 - **M1 GBK TXT**：纯 JS GB18030 解码器（内置 65KB 映射表，无 Buffer/TextDecoder 依赖）；控制字符启发式拦截伪 TXT 二进制
-- **M2 向量索引**：单一自定义 OpenAI 兼容 Embedding 端点，固定 1024 维；全局 `embed_sig`、逐批持久化、暂停/恢复、杀进程后启动续跑，配置改变后提示全库重建
-- **M2 混合与跨书检索**：单书 FTS + 向量 RRF；书库会话先 FTS 粗筛 200 条，再按当前 active sig 分书加载候选向量精排；跨书引用显示书名并可跳回原文
+- **M2 向量索引**：单一自定义 OpenAI 兼容 Embedding 端点，固定 1024 维；全局 `embed_sig`、逐批持久化、同书互斥、暂停/恢复、杀进程后启动续跑；配置变化会中止旧任务，active sig/书级向量/旧向量清理事务提交
+- **M2 混合与跨书检索**：单书 FTS + 向量 RRF；书库会话并行执行 FTS Top-200 与书级 centroid 语义路由，候选书内加载 chunk 向量后全局融合；没有关键词命中时仍可语义召回
 - **M2 长期记忆**：每 6 轮及会话结束异步抽取用户偏好/背景/兴趣，回答前按相关性注入；设置页“AI 对你的了解”可见、可逐条删除
 - 能力探测：启动时探针检测 op-sqlite FTS5；不可用时自动降级到 `rag_lexical` + JS BM25
 - 流式：优先 `expo/fetch`，失败自动切 XHR SSE（无新增依赖）
+- 隐私边界：Base URL 只接受 HTTPS；Key 仅持久化在 SecureStore，但会随请求发送到配置端点鉴权；onboarding/设置页披露对话、原文片段和向量分块的发送范围
 - 持久化：阅读进度/locator、书架、会话与引用快照、划线、设置均落库；密钥仅存 SecureStore
 - 导入上限：TXT ≤50MB，EPUB ≤100MB
-- Vitest 单测 391 个；`npx tsc --noEmit` 通过
+- Vitest 单测 393 个；`npx tsc --noEmit` 通过
 
 真机验收项见 [`../docs/m1-verification.md`](../docs/m1-verification.md) 与 [`../docs/m2-verification.md`](../docs/m2-verification.md)。当前环境无 Android 设备/模拟器，设备侧结果仍需按清单执行；Expo Go 不可用，必须使用 dev build。
 

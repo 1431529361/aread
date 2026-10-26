@@ -228,8 +228,8 @@ describe('retrieveInLibrary', () => {
     close();
   });
 
-  it('没有 FTS 候选时不做全库向量扫描', async () => {
-    const { db, close } = await seedLibrary();
+  it('没有 FTS 候选时仍通过书级路由完成语义召回', async () => {
+    const { db, b1Ids, close } = await seedLibrary();
 
     const hits = await retrieveInLibrary({
       db,
@@ -239,7 +239,9 @@ describe('retrieveInLibrary', () => {
       dims: 4,
     });
 
-    expect(hits).toEqual([]);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].chunkId).toBe(b1Ids[0]);
+    expect(hits[0].sources).toContain('vector');
     close();
   });
 

@@ -55,6 +55,22 @@ export function rankByDot(
   return hits.sort((a, b) => b.score - a.score).slice(0, Math.max(0, topN));
 }
 
+export function centroidVector(
+  vectors: readonly ArrayLike<number>[],
+  dims: number,
+): Float32Array | null {
+  if (vectors.length === 0) return null;
+  const sum = new Float64Array(dims);
+  let count = 0;
+  for (const vector of vectors) {
+    if (vector.length !== dims) continue;
+    for (let index = 0; index < dims; index++) sum[index] += vector[index] ?? 0;
+    count++;
+  }
+  if (count === 0) return null;
+  return normalizeVector(sum);
+}
+
 /** float32 BLOB 编码，显式小端，避免跨平台端序差异。 */
 export function vectorToBytes(vector: ArrayLike<number>): Uint8Array {
   const bytes = new Uint8Array(vector.length * 4);

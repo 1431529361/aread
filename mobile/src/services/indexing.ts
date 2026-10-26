@@ -1,6 +1,7 @@
-import type { DbAdapter } from '../db/adapter';
+import type { DbAdapter, DbExecutor } from '../db/adapter';
 import { chunkText, type ChunkResult } from '../core/rag/chunk';
 import { chunkParentChild } from '../core/rag/parentChild';
+import { centroidVector } from '../core/rag/vector';
 import type { ChunkRecord } from '../core/types';
 import { EMBED_DIMS } from '../core/embedding/signature';
 import {
@@ -8,8 +9,11 @@ import {
   writeLexicalIndex,
 } from '../db/repositories/chunks';
 import {
+  deleteBookVectorsExceptSig,
   deleteVectorsExceptSig,
   getChunkIdsMissingVectors,
+  loadVectorsForBook,
+  upsertBookVector,
   upsertVectors,
 } from '../db/repositories/vectors';
 
@@ -53,6 +57,7 @@ export interface IndexBookParams {
   embed?: EmbedFunction | null;
   signal?: AbortSignal;
   onProgress?: (progress: IndexProgress) => void;
+  isEmbedSigCurrent?: (db: DbExecutor, embedSig: string) => Promise<boolean>;
 }
 
 export interface IndexResult {
@@ -78,7 +83,7 @@ function report(
 }
 
 async function updateBookMeta(
-  db: DbAdapter,
+  db: DbExecutor,
   params: {
     bookId: string;
     userId: string;
@@ -107,7 +112,7 @@ async function updateBookMeta(
 }
 
 async function updateJob(
-  db: DbAdapter,
+  db: DbExecutor,
   params: { bookId: string; stage: IndexStage; cursor: number; error: string | null },
 ): Promise<void> {
   await db.execute(
@@ -332,6 +337,13 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
       aborted = true;
       break;
     }
+    if (
+      params.isEmbedSigCurrent &&
+      !(await params.isEmbedSigCurrent(db, embed!.embedSig))
+    ) {
+      lastError = '向量配置已改变，请使用新配置继续重建';
+      break;
+    }
 
     const batch = pending.slice(i, i + EMBED_BATCH_SIZE);
     try {
@@ -418,18 +430,79 @@ export async function indexBook(params: IndexBookParams): Promise<IndexResult> {
     };
   }
 
-  await deleteVectorsExceptSig(db, bookId, embed!.embedSig);
-  await markStage(db, {
+  const currentVectors = await loadVectorsForBook(db, {
     bookId,
-    userId,
-    stage: 'ready',
-    progress: 1,
-    cursor: total,
     embedSig: embed!.embedSig,
-    embedDims: dims,
-    onProgress,
+  });
+  const centroid = centroidVector(
+    currentVectors.map((item) => item.vector),
+    dims,
+  );
+  if (!centroid) {
+    throw new Error('向量索引完成但无法生成书级路由向量');
+  }
+
+  const switched = await db.transaction(async (tx) => {
+    if (
+      params.isEmbedSigCurrent &&
+      !(await params.isEmbedSigCurrent(tx, embed!.embedSig))
+    ) {
+      return false;
+    }
+    await upsertBookVector(tx, {
+      bookId,
+      embedSig: embed!.embedSig,
+      dims,
+      vector: centroid,
+    });
+    await deleteVectorsExceptSig(tx, bookId, embed!.embedSig);
+    await deleteBookVectorsExceptSig(tx, bookId, embed!.embedSig);
+    await updateBookMeta(tx, {
+      bookId,
+      userId,
+      status: 'ready',
+      progress: 1,
+      embedSig: embed!.embedSig,
+      embedDims: dims,
+    });
+    await updateJob(tx, {
+      bookId,
+      stage: 'ready',
+      cursor: total,
+      error: null,
+    });
+    return true;
+  });
+
+  if (!switched) {
+    const error = '向量配置已改变，请使用新配置继续重建';
+    await markStage(db, {
+      bookId,
+      userId,
+      stage: 'partial',
+      progress: 1,
+      cursor: total,
+      embedSig: keepSig,
+      embedDims: keepDims,
+      error,
+      onProgress,
+      done: total,
+      total,
+    });
+    return {
+      status: 'partial',
+      chunks: total,
+      embedded: processedCount,
+      failed: 0,
+      error,
+    };
+  }
+
+  report(onProgress, {
+    stage: 'ready',
     done: total,
     total,
+    percent: 100,
   });
 
   return {

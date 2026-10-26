@@ -109,6 +109,15 @@ describe('providerSettings', () => {
       rerankModel: '',
     });
     expect(buildReranker((await getProviderConfig(db, 'embedding'))!, 'key')).toBeNull();
+    expect(() =>
+      buildChatConfig({ ...chat, baseUrl: 'http://chat.example.com/v1' }, 'chat-key'),
+    ).toThrow('Base URL 必须使用 HTTPS');
+    expect(() =>
+      buildEmbeddingConfig(
+        { ...embedding, baseUrl: 'http://embedding.example.com/v1' },
+        'embed-key',
+      ),
+    ).toThrow('Base URL 必须使用 HTTPS');
     close();
   });
 });

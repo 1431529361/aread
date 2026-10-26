@@ -61,6 +61,7 @@ describe('runMigrations', () => {
       'books_meta',
       'rag_chunks',
       'rag_vectors',
+      'rag_book_vectors',
       'rag_fts',
       'highlights',
       'conversations',

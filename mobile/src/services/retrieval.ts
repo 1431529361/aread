@@ -1,6 +1,10 @@
 import type { DbAdapter } from '../db/adapter';
 import { loadChunksByIds, queryFts } from '../db/repositories/chunks';
-import { loadVectorsForBook, loadVectorsForChunks } from '../db/repositories/vectors';
+import {
+  ensureActiveBookVectors,
+  loadActiveBookVectors,
+  loadVectorsForBook,
+} from '../db/repositories/vectors';
 import { rrfFuse } from '../core/rag/rrf';
 import { rankByDot } from '../core/rag/vector';
 import {
@@ -34,6 +38,8 @@ export interface RetrievalOptions {
 
 export const RECALL_N = 20;
 export const LIBRARY_FTS_CANDIDATES = 200;
+export const LIBRARY_VECTOR_BOOKS = 8;
+export const LIBRARY_VECTOR_CANDIDATES = 100;
 
 function toHit(
   chunk: ChunkRecord,
@@ -91,47 +97,64 @@ async function vectorCandidatesInBook(
 async function vectorCandidatesInLibrary(
   db: DbAdapter,
   params: {
-    candidates: readonly ChunkRecord[];
+    lexicalCandidates: readonly ChunkRecord[];
     embedSig: string;
+    dims: number;
     queryVector: ArrayLike<number>;
     perBookLimit: number;
   },
 ): Promise<RankedChunk[]> {
-  const byBook = new Map<string, number[]>();
-  for (const chunk of params.candidates) {
-    const ids = byBook.get(chunk.bookId) ?? [];
-    ids.push(chunk.id);
-    byBook.set(chunk.bookId, ids);
+  await ensureActiveBookVectors(db, {
+    embedSig: params.embedSig,
+    dims: params.dims,
+  });
+  const bookVectors = await loadActiveBookVectors(db, {
+    embedSig: params.embedSig,
+    dims: params.dims,
+  });
+  if (bookVectors.length === 0) return [];
+
+  const routedBookIds = rankByDot(
+    params.queryVector,
+    bookVectors.map((item) => ({ chunkId: item.bookId, vector: item.vector })),
+    LIBRARY_VECTOR_BOOKS,
+  )
+    .filter((item) => item.score > 0)
+    .map((item) => String(item.chunkId));
+  const activeBooks = new Set(bookVectors.map((item) => item.bookId));
+  const selectedBooks = new Set(routedBookIds);
+  for (const chunk of params.lexicalCandidates) {
+    if (activeBooks.has(chunk.bookId)) selectedBooks.add(chunk.bookId);
   }
 
-  const activeRows = await db.queryAll<{ id: string }>(
-    `SELECT id FROM books_meta
-     WHERE embed_sig = ? AND index_status = 'ready'`,
-    [params.embedSig],
-  );
-  const activeBooks = new Set(activeRows.map((row) => row.id));
-  const results: RankedChunk[] = [];
-  for (const [bookId, chunkIds] of byBook) {
-    if (!activeBooks.has(bookId)) continue;
-    const vectors = await loadVectorsForChunks(db, {
-      chunkIds,
+  const rankedIds: { id: number; score: number }[] = [];
+  for (const bookId of selectedBooks) {
+    const vectors = await loadVectorsForBook(db, {
+      bookId,
       embedSig: params.embedSig,
     });
-    if (vectors.length === 0) continue;
     const ranked = rankByDot(
       params.queryVector,
       vectors.map((item) => ({ chunkId: item.chunkId, vector: item.vector })),
       params.perBookLimit,
     );
-    const chunkMap = new Map(
-      params.candidates.map((chunk) => [chunk.id, chunk] as const),
-    );
     for (const item of ranked) {
-      const chunk = chunkMap.get(Number(item.chunkId));
-      if (chunk) results.push({ id: chunk.id, chunk });
+      if (item.score > 0) {
+        rankedIds.push({ id: Number(item.chunkId), score: item.score });
+      }
     }
   }
-  return results;
+  rankedIds.sort((a, b) => b.score - a.score);
+  const topIds = rankedIds
+    .slice(0, LIBRARY_VECTOR_CANDIDATES)
+    .map((item) => item.id);
+  const chunks = await loadChunksByIds(db, topIds);
+  return topIds
+    .map((id) => {
+      const chunk = chunks.get(id);
+      return chunk ? { id, chunk } : null;
+    })
+    .filter((item): item is RankedChunk => item !== null);
 }
 
 function fuse(
@@ -238,8 +261,8 @@ export async function retrieveInBook(
 }
 
 /**
- * 书库检索：FTS 粗筛 200 条 → 按书分组加载候选向量精排 → RRF Top-K。
- * 没有 FTS 候选时不做全库向量扫描，避免内存与延迟失控。
+ * 书库检索：FTS 粗筛 200 条，与书级向量选书 → 书内向量召回并行，再做 RRF Top-K。
+ * 语义召回不依赖关键词命中，避免关键词不重合时漏掉相关原文。
  */
 export async function retrieveInLibrary(
   options: RetrievalOptions,
@@ -259,11 +282,12 @@ export async function retrieveInLibrary(
   }
 
   let vectors: RankedChunk[] | null = null;
-  if (queryVector && options.activeSig && fts.length > 0) {
+  if (queryVector && options.activeSig) {
     try {
       vectors = await vectorCandidatesInLibrary(options.db, {
-        candidates: fts.map((item) => item.chunk),
+        lexicalCandidates: fts.map((item) => item.chunk),
         embedSig: options.activeSig,
+        dims: options.dims ?? EMBED_DIMS,
         queryVector,
         perBookLimit: options.recallN ?? RECALL_N,
       });

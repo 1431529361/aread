@@ -10,6 +10,7 @@ import {
   buildChatConfig,
   buildEmbeddingConfig,
   getChatContextWindow,
+  requireHttpsBaseUrl,
 } from './providerSettings';
 import { getApiKey, maskApiKey, setApiKey } from './secureStore';
 import type { LlmClientConfig } from '../core/llm/client';
@@ -79,6 +80,7 @@ export async function saveProvider(
   input: SaveProviderInput,
 ): Promise<void> {
   const existing = await getProviderConfig(db, input.kind);
+  const baseUrl = requireHttpsBaseUrl(input.baseUrl);
   const newKey = input.apiKey?.trim() ?? '';
 
   if (newKey) await setApiKey(input.kind, newKey);
@@ -89,7 +91,7 @@ export async function saveProvider(
 
   const payload: SaveProviderConfig = {
     kind: input.kind,
-    baseUrl: input.baseUrl,
+    baseUrl,
     model: input.model,
     maskedKey,
     dims: input.kind === 'embedding' ? input.dims ?? 1024 : null,

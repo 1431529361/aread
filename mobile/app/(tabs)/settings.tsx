@@ -309,8 +309,9 @@ export default function SettingsScreen() {
               <Card style={styles.about}>
                 <Text style={styles.aboutTitle}>AI 阅读助手 · M2</Text>
                 <Text style={styles.aboutBody}>
-                  本地优先：书籍、索引、会话、划线全部保存在设备私有目录与 SQLite，
-                  不设账号、不上传服务器。API Key 仅存于 SecureStore。
+                  本地优先：书籍、索引、会话、划线保存在设备私有目录与 SQLite，
+                  不设账号或自有服务器。使用 AI 时，对话、相关书籍片段或向量化分块会发送到你配置的
+                  第三方 HTTPS 端点；API Key 仅存 SecureStore，并随请求发送给该端点鉴权。
                 </Text>
                 <Divider />
                 <Text style={styles.aboutHint}>

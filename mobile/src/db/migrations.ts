@@ -110,6 +110,20 @@ export const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_rag_lexical_book ON rag_lexical(book_id)`,
     ],
   },
+  {
+    version: 8,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS rag_book_vectors (
+        book_id TEXT NOT NULL,
+        embed_sig TEXT NOT NULL,
+        dims INTEGER NOT NULL DEFAULT 1024,
+        vector BLOB NOT NULL,
+        PRIMARY KEY (book_id, embed_sig)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_rag_book_vectors_sig
+        ON rag_book_vectors(embed_sig, book_id)`,
+    ],
+  },
 ];
 
 export async function getSchemaVersion(db: DbExecutor): Promise<number> {

@@ -159,8 +159,9 @@ export default function OnboardingScreen() {
               <Card style={styles.intro}>
                 <Text style={styles.introTitle}>先连接你的对话模型</Text>
                 <Text style={styles.introBody}>
-                  使用任意 OpenAI 兼容端点。API Key 只写入系统 SecureStore，不上传、
-                  不内置任何服务商。没有网络时，已导入的书仍可离线阅读与搜索。
+                  使用任意 OpenAI 兼容端点。API Key 仅保存在系统 SecureStore，并只发送到你配置的
+                  HTTPS 端点用于鉴权；提问时会向该第三方端点发送对话、所选原文和检索到的书籍片段。
+                  没有网络时，已导入的书仍可离线阅读与搜索。
                 </Text>
               </Card>
               <Section title="对话模型" hint="必填，划词提问与引用回答都依赖它">
@@ -187,8 +188,8 @@ export default function OnboardingScreen() {
               <Card style={styles.intro}>
                 <Text style={styles.introTitle}>向量模型（可选）</Text>
                 <Text style={styles.introBody}>
-                  M0-B 的关键词检索与引用跳转不依赖向量。跳过向量配置只会影响后续的
-                  语义召回与重排，界面会明确显示“仅关键词检索”。
+                  跳过后仍可使用关键词检索与引用跳转。配置后，建立索引会把书籍分块发送到你配置的
+                  Embedding 端点；检索与重排也会发送查询及候选片段。界面会明确显示索引模式。
                 </Text>
               </Card>
               <Section title="向量模型" hint="必须返回 1024 维；保存前会自动实测">

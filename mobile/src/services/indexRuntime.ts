@@ -1,10 +1,45 @@
-import type { DbAdapter } from '../db/adapter';
+import type { DbAdapter, DbExecutor } from '../db/adapter';
 import { LOCAL_USER_ID } from '../db/schema';
 import { computeEmbedSig } from '../core/embedding/signature';
 import { embedTexts } from '../core/embedding/client';
 import { indexBook, type IndexProgress, type IndexResult } from './indexing';
 import { loadEmbeddingRuntime, type EmbeddingRuntime } from './providerRuntime';
 import { nativeFetch } from './llmRuntime';
+
+const activeBookIndexes = new Set<string>();
+
+async function withBookIndexLock<T>(bookId: string, run: () => Promise<T>): Promise<T> {
+  if (activeBookIndexes.has(bookId)) throw new Error('这本书正在建立向量索引');
+  activeBookIndexes.add(bookId);
+  try {
+    return await run();
+  } finally {
+    activeBookIndexes.delete(bookId);
+  }
+}
+
+async function isEmbedSigCurrent(db: DbExecutor, expectedSig: string): Promise<boolean> {
+  const row = await db.queryOne<{
+    base_url: string;
+    model: string;
+    dimensions_param: number | null;
+    dims: number | null;
+  }>(
+    `SELECT base_url, model, dimensions_param, dims
+     FROM provider_config WHERE kind = 'embedding'`,
+  );
+  if (!row) return false;
+  try {
+    return computeEmbedSig({
+      baseUrl: row.base_url,
+      model: row.model,
+      dimensionsParam: row.dimensions_param,
+      dims: row.dims ?? 1024,
+    }) === expectedSig;
+  } catch {
+    return false;
+  }
+}
 
 export function runtimeEmbedSig(runtime: EmbeddingRuntime): string {
   return computeEmbedSig({
@@ -27,6 +62,28 @@ function embedder(runtime: EmbeddingRuntime, signal?: AbortSignal) {
         signal,
       }),
   };
+}
+
+async function indexBookWithRuntime(params: {
+  db: DbAdapter;
+  runtime: EmbeddingRuntime;
+  userId: string;
+  bookId: string;
+  signal?: AbortSignal;
+  onProgress?: (progress: IndexProgress) => void;
+}): Promise<IndexResult> {
+  return withBookIndexLock(params.bookId, () =>
+    indexBook({
+      db: params.db,
+      userId: params.userId,
+      bookId: params.bookId,
+      mode: 'embedding',
+      embed: embedder(params.runtime, params.signal),
+      signal: params.signal,
+      onProgress: params.onProgress,
+      isEmbedSigCurrent,
+    }),
+  );
 }
 
 export async function markBooksForVectorRebuild(
@@ -55,12 +112,11 @@ export async function runBookVectorIndex(params: {
   const runtime = await loadEmbeddingRuntime(params.db);
   if (!runtime) throw new Error('尚未配置向量模型，请先在设置中完成配置');
 
-  return indexBook({
+  return indexBookWithRuntime({
     db: params.db,
+    runtime,
     userId: params.userId ?? LOCAL_USER_ID,
     bookId: params.bookId,
-    mode: 'embedding',
-    embed: embedder(runtime, params.signal),
     signal: params.signal,
     onProgress: params.onProgress,
   });
@@ -104,6 +160,9 @@ export async function rebuildLibraryVectors(params: {
   let partial = 0;
   for (let index = 0; index < rows.length; index++) {
     if (params.signal?.aborted) break;
+    if (!(await isEmbedSigCurrent(params.db, activeSig))) {
+      throw new Error('向量配置已改变，请重新启动全库重建');
+    }
     const row = rows[index];
     params.onProgress?.({
       current: index,
@@ -113,12 +172,11 @@ export async function rebuildLibraryVectors(params: {
       book: null,
     });
     try {
-      const result = await indexBook({
+      const result = await indexBookWithRuntime({
         db: params.db,
+        runtime,
         userId,
         bookId: row.id,
-        mode: 'embedding',
-        embed: embedder(runtime, params.signal),
         signal: params.signal,
         onProgress: (book) =>
           params.onProgress?.({

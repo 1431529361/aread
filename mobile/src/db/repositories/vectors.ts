@@ -1,6 +1,7 @@
-import type { DbAdapter } from '../adapter';
+import type { DbAdapter, DbExecutor } from '../adapter';
 import {
   bytesToVector,
+  centroidVector,
   normalizeVector,
   vectorToBytes,
 } from '../../core/rag/vector';
@@ -55,7 +56,7 @@ export async function upsertVectors(
   });
 }
 
-function mapVectors(rows: Array<{ chunk_id: number; vector: unknown }>): LoadedVector[] {
+function mapVectors(rows: { chunk_id: number; vector: unknown }[]): LoadedVector[] {
   return rows.map((row) => ({
     chunkId: row.chunk_id,
     vector: bytesToVector(asUint8Array(row.vector)),
@@ -63,7 +64,7 @@ function mapVectors(rows: Array<{ chunk_id: number; vector: unknown }>): LoadedV
 }
 
 export async function loadVectorsForBook(
-  db: DbAdapter,
+  db: DbExecutor,
   params: { bookId: string; embedSig: string },
 ): Promise<LoadedVector[]> {
   const rows = await db.queryAll<{ chunk_id: number; vector: unknown }>(
@@ -90,7 +91,7 @@ export async function loadVectorsForChunks(
 
 /** 重建成功后才清理旧 embed_sig 的向量。 */
 export async function deleteVectorsExceptSig(
-  db: DbAdapter,
+  db: DbExecutor,
   bookId: string,
   activeSig: string,
 ): Promise<void> {
@@ -125,4 +126,83 @@ export async function getChunkIdsMissingVectors(
     [params.embedSig, params.bookId],
   );
   return rows.map((row) => Number(row.id));
+}
+
+export interface LoadedBookVector {
+  bookId: string;
+  vector: Float32Array;
+}
+
+export async function upsertBookVector(
+  db: DbExecutor,
+  params: { bookId: string; embedSig: string; dims: number; vector: ArrayLike<number> },
+): Promise<void> {
+  const normalized = normalizeVector(params.vector);
+  await db.execute(
+    `INSERT INTO rag_book_vectors (book_id, embed_sig, dims, vector)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(book_id, embed_sig) DO UPDATE SET
+       dims = excluded.dims,
+       vector = excluded.vector`,
+    [params.bookId, params.embedSig, params.dims, vectorToBytes(normalized)],
+  );
+}
+
+export async function deleteBookVectorsExceptSig(
+  db: DbExecutor,
+  bookId: string,
+  activeSig: string,
+): Promise<void> {
+  await db.execute(
+    'DELETE FROM rag_book_vectors WHERE book_id = ? AND embed_sig != ?',
+    [bookId, activeSig],
+  );
+}
+
+export async function loadActiveBookVectors(
+  db: DbAdapter,
+  params: { embedSig: string; dims: number },
+): Promise<LoadedBookVector[]> {
+  const rows = await db.queryAll<{ book_id: string; vector: unknown }>(
+    `SELECT bv.book_id, bv.vector
+     FROM rag_book_vectors bv
+     JOIN books_meta b ON b.id = bv.book_id
+     WHERE bv.embed_sig = ? AND bv.dims = ?
+       AND b.embed_sig = bv.embed_sig AND b.index_status = 'ready'`,
+    [params.embedSig, params.dims],
+  );
+  return rows.map((row) => ({
+    bookId: row.book_id,
+    vector: bytesToVector(asUint8Array(row.vector)),
+  }));
+}
+
+/** 为迁移前已经完成向量索引的书补建书级路由向量。 */
+export async function ensureActiveBookVectors(
+  db: DbAdapter,
+  params: { embedSig: string; dims: number },
+): Promise<void> {
+  const missing = await db.queryAll<{ id: string }>(
+    `SELECT b.id
+     FROM books_meta b
+     LEFT JOIN rag_book_vectors bv
+       ON bv.book_id = b.id AND bv.embed_sig = ?
+     WHERE b.embed_sig = ? AND b.embed_dims = ? AND b.index_status = 'ready'
+       AND bv.book_id IS NULL`,
+    [params.embedSig, params.embedSig, params.dims],
+  );
+  for (const row of missing) {
+    const vectors = await loadVectorsForBook(db, {
+      bookId: row.id,
+      embedSig: params.embedSig,
+    });
+    const centroid = centroidVector(vectors.map((item) => item.vector), params.dims);
+    if (!centroid) continue;
+    await upsertBookVector(db, {
+      bookId: row.id,
+      embedSig: params.embedSig,
+      dims: params.dims,
+      vector: centroid,
+    });
+  }
 }

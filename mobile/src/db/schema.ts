@@ -1,5 +1,5 @@
 export const LOCAL_USER_ID = 'local';
-export const LATEST_SCHEMA_VERSION = 7;
+export const LATEST_SCHEMA_VERSION = 8;
 
 /**
  * 移动端 schema（v1）
