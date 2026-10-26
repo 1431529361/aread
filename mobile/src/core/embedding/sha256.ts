@@ -19,10 +19,14 @@ function rotr(value: number, bits: number): number {
 
 /**
  * 纯 TS SHA-256（Hermes 无 Node crypto，避免为此引入原生依赖）。
- * 用于 embed_sig 计算。
+ * 用于 embed_sig 计算与书籍文件去重。
  */
 export function sha256Hex(input: string): string {
-  const data = new TextEncoder().encode(input);
+  return sha256HexBytes(new TextEncoder().encode(input));
+}
+
+/** 对任意字节序列求 SHA-256（EPUB 等二进制文件去重用）。 */
+export function sha256HexBytes(data: Uint8Array): string {
   const bitLength = data.length * 8;
   const paddedLength = Math.ceil((data.length + 9) / 64) * 64;
   const bytes = new Uint8Array(paddedLength);

@@ -15,7 +15,7 @@ import type { BookRecord } from '../../src/db/repositories/books';
 import { listBooks } from '../../src/db/repositories/books';
 import { getDatabase } from '../../src/db/client';
 import { loadChatRuntime } from '../../src/services/providerRuntime';
-import { importTxtBook, pickTxtFile } from '../../src/services/bookImport';
+import { importBook, pickBookFile } from '../../src/services/bookImport';
 import { formatFileSize } from '../../src/core/import/txt';
 import { useAppStore } from '../../src/stores/appStore';
 import { BookCard } from '../../src/components/BookCard';
@@ -38,7 +38,7 @@ export default function LibraryScreen() {
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<ImportProgressState>({
-    title: '导入 TXT',
+    title: '导入书籍',
     label: '准备导入…',
     percent: 0,
   });
@@ -68,13 +68,13 @@ export default function LibraryScreen() {
   );
 
   async function handleImport(): Promise<void> {
-    const asset = await pickTxtFile();
+    const asset = await pickBookFile();
     if (!asset) return;
     setImporting(true);
-    setProgress({ title: '导入 TXT', label: '准备导入…', percent: 0 });
+    setProgress({ title: '导入书籍', label: '准备导入…', percent: 0 });
     try {
       const db = getDatabase();
-      const result = await importTxtBook({
+      const result = await importBook({
         db,
         asset,
         onProgress: (value) =>
@@ -92,14 +92,14 @@ export default function LibraryScreen() {
           { text: '继续阅读', onPress: () => openReader(result.book.id) },
         ]);
       } else {
-        Alert.alert(
-          '导入完成',
-          `《${result.book.title}》\n编码：${result.encoding.toUpperCase()} · ${result.book.sizeFormatted}`,
-          [
-            { text: '留在书架' },
-            { text: '开始阅读', onPress: () => openReader(result.book.id) },
-          ],
-        );
+        const detail =
+          result.format === 'epub'
+            ? `EPUB · ${result.book.sizeFormatted}`
+            : `TXT · 编码 ${(result.encoding ?? 'utf-8').toUpperCase()} · ${result.book.sizeFormatted}`;
+        Alert.alert('导入完成', `《${result.book.title}》\n${detail}`, [
+          { text: '留在书架' },
+          { text: '开始阅读', onPress: () => openReader(result.book.id) },
+        ]);
       }
     } catch (caught) {
       Alert.alert('导入失败', caught instanceof Error ? caught.message : String(caught));
@@ -121,7 +121,7 @@ export default function LibraryScreen() {
               : '所有内容只保存在本机'}
           </Text>
         </View>
-        <Button title="＋ 导入 TXT" small onPress={handleImport} loading={importing} />
+        <Button title="＋ 导入书籍" small onPress={handleImport} loading={importing} />
       </View>
 
       {loading ? (
@@ -171,7 +171,7 @@ export default function LibraryScreen() {
             error ? undefined : (
               <EmptyState
                 title="书架还是空的"
-                body="导入一本 TXT 就能离线阅读；划词提问、关键词搜索与引用跳转都不需要联网。"
+                body="导入一本 TXT 或 EPUB 就能离线阅读；划词提问、关键词搜索与引用跳转都不需要联网。"
                 action={<Button title="导入第一本书" onPress={handleImport} />}
               />
             )

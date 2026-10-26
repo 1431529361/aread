@@ -16,6 +16,8 @@ export function openReader(
   if (locator) {
     params.start = String(Math.max(0, Math.floor(locator.start)));
     params.end = String(Math.max(0, Math.floor(locator.end)));
+    // EPUB 的 offset 相对 spine 文档，必须带上 href 才能定位到正确的章节
+    if (locator.kind === 'epub' && locator.href) params.href = locator.href;
   }
   if (options.flash) params.flash = '1';
   push('/reader/[bookId]', params);

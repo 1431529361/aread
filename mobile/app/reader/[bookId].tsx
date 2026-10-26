@@ -23,14 +23,17 @@ import {
 } from '../../src/db/repositories/highlights';
 import { getOrCreateBookConversation } from '../../src/db/repositories/conversations';
 import { getDatabase } from '../../src/db/client';
-import { loadBookText } from '../../src/services/bookContent';
+import { loadBookContent } from '../../src/services/bookContent';
+import {
+  epubChapterTitle,
+  loadEpubChapter,
+  type LoadedEpub,
+} from '../../src/services/epubContent';
 import { splitChapters, type Chapter } from '../../src/core/rag/chapters';
 import type { Locator } from '../../src/core/types';
 import { clampLocator, normalizeLocator } from '../../src/reader/locator';
-import {
-  buildReaderHtml,
-  type ReaderTheme,
-} from '../../src/reader/readerHtml';
+import { buildReaderHtml, type ReaderTheme } from '../../src/reader/readerHtml';
+import { buildEpubChapterHtml } from '../../src/reader/epubHtml';
 import { clampProgress, progressFromLocator } from '../../src/reader/progress';
 import { useAppStore, type ReaderPrefs } from '../../src/stores/appStore';
 import { Button, ProgressBar } from '../../src/components/ui';
@@ -93,11 +96,22 @@ interface SelectionAction {
   end: number;
 }
 
+interface TocRow {
+  key: string;
+  title: string;
+  /** EPUB 用 href 定位章节；TXT 用 start/end */
+  href: string | null;
+  start: number;
+  end: number;
+  percent: number;
+}
+
 export default function ReaderScreen() {
   const params = useLocalSearchParams<{
     bookId: string;
     start?: string;
     end?: string;
+    href?: string;
   }>();
   const bookId = firstParam(params.bookId);
   const insets = useSafeAreaInsets();
@@ -111,11 +125,16 @@ export default function ReaderScreen() {
   const latestRef = useRef<{ progress: number; locator: Locator } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spineLengthRef = useRef(0);
+  const chapterIndexRef = useRef(0);
 
   const [book, setBook] = useState<BookRecord | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [epub, setEpub] = useState<LoadedEpub | null>(null);
+  const [chapterIndex, setChapterIndex] = useState(0);
   const [html, setHtml] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [chapterLoading, setChapterLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
   const [styleOpen, setStyleOpen] = useState(false);
@@ -126,6 +145,9 @@ export default function ReaderScreen() {
   prefsRef.current = readerPrefs;
 
   const chrome = chromeFor(readerPrefs.theme);
+  const isEpub = epub != null;
+
+  chapterIndexRef.current = chapterIndex;
 
   const inject = useCallback((code: string) => {
     webRef.current?.injectJavaScript(`${code};
@@ -161,6 +183,72 @@ true;`);
     [persistLatest],
   );
 
+  const chapterHighlights = useCallback((href: string | null): HighlightRecord[] => {
+    if (href == null) return highlightsRef.current;
+    return highlightsRef.current.filter((mark) => mark.loc.href === href);
+  }, []);
+
+  /** 载入指定 EPUB 章节并渲染；start 用于跳转到章内位置。 */
+  const openChapter = useCallback(
+    async (loaded: LoadedEpub, index: number, start: number | null = null) => {
+      const href = loaded.spine[index];
+      if (!href) return;
+      setChapterLoading(true);
+      try {
+        const chapter = await loadEpubChapter(loaded, href);
+        const length = chapter.text.length;
+        const intra =
+          start != null && start > 0
+            ? clampLocator({ kind: 'epub', href, start, end: start }, length)
+            : null;
+
+        textLengthRef.current = length;
+        chapterIndexRef.current = index;
+        setChapterIndex(index);
+
+        if (intra) {
+          latestRef.current = {
+            progress: (index + progressFromLocator(intra, length)) / Math.max(1, loaded.spine.length),
+            locator: intra,
+          };
+        } else {
+          latestRef.current = {
+            progress: index / Math.max(1, loaded.spine.length),
+            locator: { kind: 'epub', href, start: 0, end: 0 },
+          };
+        }
+
+        setHtml(
+          buildEpubChapterHtml({
+            bookTitle: loaded.title || book?.title || '未命名书籍',
+            chapterTitle: epubChapterTitle(loaded, href, index),
+            href,
+            blocks: chapter.blocks,
+            theme: prefsRef.current.theme,
+            fontSize: prefsRef.current.fontSize,
+            lineHeight: prefsRef.current.lineHeight,
+            initialLocator: intra,
+            initialProgress: intra
+              ? progressFromLocator(intra, length)
+              : clampProgress(0),
+            highlights: chapterHighlights(href).map((mark) => ({
+              id: mark.id,
+              start: mark.loc.start,
+              end: mark.loc.end,
+              color: mark.color,
+            })),
+          }),
+        );
+        if (latestRef.current) setProgress(latestRef.current.progress);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        setChapterLoading(false);
+      }
+    },
+    [book?.title, chapterHighlights],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -168,62 +256,86 @@ true;`);
         const db = getDatabase();
         const found = await getBook(db, { userId: 'local', bookId });
         if (!found) throw new Error('书籍不存在或已被删除');
-        const content = await loadBookText(found);
+        const content = await loadBookContent(found);
         const marks = await listHighlights(db, bookId);
         if (cancelled) return;
 
-        const chapterList = splitChapters(content);
+        setBook(found);
+        highlightsRef.current = marks;
+
         const start = numberParam(params.start);
         const endParam = numberParam(params.end);
+        const hrefParam = firstParam(params.href) || null;
+
+        if (content.format === 'epub' && content.epub) {
+          const loaded = content.epub;
+          spineLengthRef.current = loaded.spine.length;
+          setEpub(loaded);
+
+          const resumeHref = hrefParam ?? found.lastLocator?.href ?? null;
+          let index =
+            resumeHref && loaded.spine.includes(resumeHref)
+              ? loaded.spine.indexOf(resumeHref)
+              : 0;
+          if (!resumeHref && found.readProgress > 0) {
+            index = Math.min(
+              loaded.spine.length - 1,
+              Math.floor(found.readProgress * loaded.spine.length),
+            );
+          }
+
+          let chapterStart: number | null = null;
+          if (start != null && (hrefParam == null || hrefParam === loaded.spine[index])) {
+            chapterStart = start;
+          } else if (found.lastLocator && found.lastLocator.href === loaded.spine[index]) {
+            chapterStart = found.lastLocator.start;
+          }
+
+          setChapterIndex(index);
+          chapterIndexRef.current = index;
+          await openChapter(loaded, index, chapterStart);
+          return;
+        }
+
+        const text = content.text ?? '';
+        const chapterList = splitChapters(text);
         let initialLocator: Locator | null = null;
         if (start != null) {
           initialLocator = clampLocator(
-            {
-              kind: 'txt',
-              href: null,
-              start,
-              end: Math.max(start, endParam ?? start),
-            },
-            content.length,
+            { kind: 'txt', href: null, start, end: Math.max(start, endParam ?? start) },
+            text.length,
           );
         } else if (found.lastLocator) {
-          initialLocator = clampLocator(found.lastLocator, content.length);
+          initialLocator = clampLocator(found.lastLocator, text.length);
         }
 
         const initialProgress =
           start != null && initialLocator
-            ? progressFromLocator(initialLocator, content.length)
+            ? progressFromLocator(initialLocator, text.length)
             : clampProgress(found.readProgress);
 
-        const initialMarks = marks.map((mark) => ({
-          id: mark.id,
-          start: mark.loc.start,
-          end: mark.loc.end,
-          color: mark.color,
-        }));
-
-        setBook(found);
         setChapters(chapterList);
         setProgress(initialProgress);
-        textLengthRef.current = content.length;
-        highlightsRef.current = marks;
+        textLengthRef.current = text.length;
         if (initialLocator) {
-          latestRef.current = {
-            progress: initialProgress,
-            locator: initialLocator,
-          };
+          latestRef.current = { progress: initialProgress, locator: initialLocator };
         }
 
         setHtml(
           buildReaderHtml({
             title: found.title,
-            text: content,
-            theme: readerPrefs.theme,
-            fontSize: readerPrefs.fontSize,
-            lineHeight: readerPrefs.lineHeight,
+            text,
+            theme: prefsRef.current.theme,
+            fontSize: prefsRef.current.fontSize,
+            lineHeight: prefsRef.current.lineHeight,
             initialLocator,
             initialProgress,
-            highlights: initialMarks,
+            highlights: marks.map((mark) => ({
+              id: mark.id,
+              start: mark.loc.start,
+              end: mark.loc.end,
+              color: mark.color,
+            })),
           }),
         );
       } catch (caught) {
@@ -272,6 +384,12 @@ true;`);
     [inject],
   );
 
+  const currentHighlights = useCallback((): HighlightRecord[] => {
+    if (!isEpub) return highlightsRef.current;
+    const href = epub?.spine[chapterIndexRef.current] ?? null;
+    return chapterHighlights(href);
+  }, [chapterHighlights, epub, isEpub]);
+
   const applyStyle = useCallback(
     (prefs: ReaderPrefs, locator: Locator | null, withJump: boolean) => {
       const payload = JSON.stringify({
@@ -283,9 +401,7 @@ true;`);
         withJump && locator
           ? `;window.__reader.goTo(${JSON.stringify(locator)})`
           : '';
-      inject(
-        `window.__reader && (window.__reader.setStyle(${payload})${jump})`,
-      );
+      inject(`window.__reader && (window.__reader.setStyle(${payload})${jump})`);
     },
     [inject],
   );
@@ -322,20 +438,20 @@ true;`);
         const db = getDatabase();
         const color =
           HIGHLIGHT_COLORS[highlightsRef.current.length % HIGHLIGHT_COLORS.length];
+        const href = isEpub ? epub?.spine[chapterIndexRef.current] ?? null : null;
         const record = await addHighlight(db, {
           bookId,
-          loc: normalizeLocator({
-            kind: 'txt',
-            href: null,
-            start: selection.start,
-            end: selection.end,
-          }),
+          loc: normalizeLocator(
+            href
+              ? { kind: 'epub', href, start: selection.start, end: selection.end }
+              : { kind: 'txt', href: null, start: selection.start, end: selection.end },
+          ),
           selectedText: selection.text,
           color,
         });
         const next = [...highlightsRef.current, record];
         highlightsRef.current = next;
-        injectHighlights(next);
+        injectHighlights(href ? next.filter((mark) => mark.loc.href === href) : next);
         showToast(`已划线（${COLOR_LABELS[record.color] ?? record.color}）`);
       } catch (caught) {
         Alert.alert(
@@ -344,7 +460,7 @@ true;`);
         );
       }
     },
-    [bookId, injectHighlights, showToast],
+    [bookId, epub, injectHighlights, isEpub, showToast],
   );
 
   const handleMessage = useCallback(
@@ -358,7 +474,7 @@ true;`);
 
       if (payload.type === 'ready') {
         applyStyle(prefsRef.current, latestRef.current?.locator ?? null, false);
-        injectHighlights(highlightsRef.current);
+        injectHighlights(currentHighlights());
         return;
       }
 
@@ -367,10 +483,14 @@ true;`);
         const locatorRaw = payload.locator as Locator | undefined;
         if (!locatorRaw || typeof locatorRaw.start !== 'number') return;
         const locator = clampLocator(locatorRaw, textLengthRef.current);
-        scheduleSave({
-          progress: clampProgress(rawProgress),
-          locator,
-        });
+        const spine = spineLengthRef.current;
+        const overall =
+          isEpub && spine > 0
+            ? clampProgress(
+                (chapterIndexRef.current + clampProgress(rawProgress)) / spine,
+              )
+            : clampProgress(rawProgress);
+        scheduleSave({ progress: overall, locator });
         return;
       }
 
@@ -392,19 +512,48 @@ true;`);
         }
       }
     },
-    [applyStyle, bookId, handleAsk, handleHighlight, injectHighlights, scheduleSave],
+    [
+      applyStyle,
+      bookId,
+      currentHighlights,
+      handleAsk,
+      handleHighlight,
+      injectHighlights,
+      isEpub,
+      scheduleSave,
+    ],
   );
 
-  function jumpTo(start: number, end: number): void {
+  /** 章内跳转（TXT 全局 offset；EPUB 章内 offset）。 */
+  function jumpTo(start: number, end: number, href: string | null): void {
+    if (isEpub && epub && href) {
+      const currentHref = epub.spine[chapterIndexRef.current] ?? null;
+      if (href !== currentHref) {
+        const index = epub.spine.indexOf(href);
+        if (index >= 0) void openChapter(epub, index, start);
+        return;
+      }
+    }
     const locator = clampLocator(
-      { kind: 'txt', href: null, start, end },
+      href
+        ? { kind: 'epub', href, start, end }
+        : { kind: 'txt', href: null, start, end },
       textLengthRef.current,
     );
     latestRef.current = {
-      progress: progressFromLocator(locator, textLengthRef.current),
+      progress: isEpub
+        ? (chapterIndexRef.current + progressFromLocator(locator, textLengthRef.current)) /
+          Math.max(1, spineLengthRef.current)
+        : progressFromLocator(locator, textLengthRef.current),
       locator,
     };
     inject(`window.__reader && window.__reader.goTo(${JSON.stringify(locator)})`);
+  }
+
+  function goToChapter(index: number): void {
+    if (!epub) return;
+    if (index < 0 || index >= epub.spine.length) return;
+    void openChapter(epub, index, null);
   }
 
   function handleBack(): void {
@@ -412,20 +561,39 @@ true;`);
     goBackOrLibrary();
   }
 
-  const tocRows = useMemo(
-    () =>
-      chapters.map((chapter) => ({
-        key: `${chapter.index}-${chapter.start}`,
-        title: chapter.title || '未命名章节',
-        start: chapter.start,
-        end: chapter.end,
-        percent:
-          textLengthRef.current > 0
-            ? Math.round((chapter.start / textLengthRef.current) * 100)
-            : 0,
-      })),
-    [chapters],
-  );
+  const tocRows = useMemo<TocRow[]>(() => {
+    if (isEpub && epub) {
+      const total = Math.max(1, epub.spine.length);
+      return epub.toc.map((entry, index) => {
+        const spineIndex = epub.spine.indexOf(entry.href);
+        return {
+          key: `${index}-${entry.href}-${entry.fragment}`,
+          title: entry.title || '未命名章节',
+          href: entry.href,
+          start: 0,
+          end: 0,
+          percent: spineIndex < 0 ? 0 : Math.round((spineIndex / total) * 100),
+        };
+      });
+    }
+    return chapters.map((chapter) => ({
+      key: `${chapter.index}-${chapter.start}`,
+      title: chapter.title || '未命名章节',
+      href: null,
+      start: chapter.start,
+      end: chapter.end,
+      percent:
+        textLengthRef.current > 0
+          ? Math.round((chapter.start / textLengthRef.current) * 100)
+          : 0,
+    }));
+  }, [chapters, epub, isEpub]);
+
+  const currentHref = isEpub && epub ? epub.spine[chapterIndex] ?? null : null;
+  const currentTitle = useMemo(() => {
+    if (!isEpub || !epub || !currentHref) return null;
+    return epubChapterTitle(epub, currentHref, chapterIndex);
+  }, [chapterIndex, currentHref, epub, isEpub]);
 
   if (loading) {
     return (
@@ -473,7 +641,7 @@ true;`);
               numberOfLines={1}
               style={[styles.headerTitle, { color: chrome.text }]}
             >
-              {book.title}
+              {currentTitle ? `${book.title} · ${currentTitle}` : book.title}
             </Text>
             <Text style={[styles.headerPercent, { color: chrome.muted }]}>
               {Math.round(progress * 100)}%
@@ -505,6 +673,37 @@ true;`);
           </Pressable>
         </View>
         <ProgressBar value={progress} />
+        {isEpub && epub ? (
+          <View style={styles.chapterBar}>
+            <Pressable
+              accessibilityRole="button"
+              disabled={chapterIndex <= 0}
+              onPress={() => goToChapter(chapterIndex - 1)}
+              hitSlop={6}
+              style={[styles.chapterNav, chapterIndex <= 0 && styles.chapterNavDisabled]}
+            >
+              <Text style={[styles.chapterNavText, { color: chrome.text }]}>‹ 上一章</Text>
+            </Pressable>
+            <Text
+              numberOfLines={1}
+              style={[styles.chapterLabel, { color: chrome.muted }]}
+            >
+              {currentTitle} · {chapterIndex + 1}/{epub.spine.length}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={chapterIndex >= epub.spine.length - 1}
+              onPress={() => goToChapter(chapterIndex + 1)}
+              hitSlop={6}
+              style={[
+                styles.chapterNav,
+                chapterIndex >= epub.spine.length - 1 && styles.chapterNavDisabled,
+              ]}
+            >
+              <Text style={[styles.chapterNavText, { color: chrome.text }]}>下一章 ›</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <WebView
@@ -520,6 +719,12 @@ true;`);
         style={[styles.web, { backgroundColor: chrome.bg }]}
         containerStyle={styles.webContainer}
       />
+
+      {chapterLoading ? (
+        <View style={styles.chapterLoading} pointerEvents="none">
+          <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : null}
 
       {toast ? (
         <View
@@ -555,7 +760,7 @@ true;`);
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => {
-                    jumpTo(item.start, item.end);
+                    jumpTo(item.start, item.end, item.href);
                     setTocOpen(false);
                   }}
                   style={({ pressed }) => [styles.tocRow, pressed && styles.pressed]}
@@ -567,7 +772,9 @@ true;`);
                 </Pressable>
               )}
               ListEmptyComponent={
-                <Text style={styles.tocEmpty}>正文没有可识别的章节标题。</Text>
+                <Text style={styles.tocEmpty}>
+                  {isEpub ? '这本书没有提供目录。' : '正文没有可识别的章节标题。'}
+                </Text>
               }
             />
           </View>
@@ -714,6 +921,7 @@ true;`);
 
             <Text style={styles.sheetHint}>
               长按正文选中文字，即可提问、划线、全书搜索或复制。
+              {isEpub ? ' EPUB 按章节加载，图片已离线内置。' : ''}
             </Text>
           </View>
         </View>
@@ -763,8 +971,24 @@ const styles = StyleSheet.create({
   },
   headerActionText: { fontSize: 13, fontWeight: '600' },
   styleIcon: { fontSize: 15, fontWeight: '700' },
+  chapterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingTop: 2,
+  },
+  chapterNav: { paddingHorizontal: 6, paddingVertical: 4 },
+  chapterNavDisabled: { opacity: 0.35 },
+  chapterNavText: { fontSize: 12, fontWeight: '600' },
+  chapterLabel: { ...type.tiny, flex: 1, textAlign: 'center' },
   web: { flex: 1 },
   webContainer: { flex: 1 },
+  chapterLoading: {
+    position: 'absolute',
+    top: '50%',
+    alignSelf: 'center',
+  },
   toast: {
     position: 'absolute',
     alignSelf: 'center',

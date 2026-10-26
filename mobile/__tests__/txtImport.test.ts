@@ -48,16 +48,16 @@ describe('decodeTxtBytes', () => {
     expect(decoded).toEqual({ text: 'ABC DEF GHI', encoding: 'utf-16le' });
   });
 
-  it('GBK 字节明确报错，不把乱码写入书库', () => {
-    const gbk = new Uint8Array([0xd6, 0xd0, 0xce, 0xc4]); // “中文”的 GBK 编码
-    try {
-      decodeTxtBytes(gbk);
-      throw new Error('应当抛出 TxtDecodeError');
-    } catch (error) {
-      expect(error).toBeInstanceOf(TxtDecodeError);
-      expect((error as TxtDecodeError).code).toBe('NON_UTF8');
-      expect((error as TxtDecodeError).message).toContain('GBK');
-    }
+  it('GBK 字节按 GB18030 正确解码，不产生乱码', () => {
+    // “中文” = D6 D0 CE C4
+    const short = new Uint8Array([0xd6, 0xd0, 0xce, 0xc4]);
+    expect(decodeTxtBytes(short)).toEqual({ text: '中文', encoding: 'gb18030' });
+
+    // 中文测试abc（混排 ASCII）
+    const mixed = new Uint8Array([
+      0xd6, 0xd0, 0xce, 0xc4, 0xb2, 0xe2, 0xca, 0xd4, 0x61, 0x62, 0x63,
+    ]);
+    expect(decodeTxtBytes(mixed)).toEqual({ text: '中文测试abc', encoding: 'gb18030' });
   });
 
   it('二进制内容会被拒绝', () => {
@@ -65,6 +65,18 @@ describe('decodeTxtBytes', () => {
     expect(() => decodeTxtBytes(binary)).toThrow(TxtDecodeError);
     try {
       decodeTxtBytes(binary);
+    } catch (error) {
+      expect((error as TxtDecodeError).code).toBe('BINARY');
+    }
+  });
+
+  it('控制字符密集的伪 TXT 文件按二进制拒绝', () => {
+    // 非 UTF-8 且控制字符占比很高：典型是被改名的二进制文件
+    const fake = new Uint8Array(200);
+    for (let i = 0; i < fake.length; i++) fake[i] = (i * 7) % 0x20;
+    expect(() => decodeTxtBytes(fake)).toThrow(TxtDecodeError);
+    try {
+      decodeTxtBytes(fake);
     } catch (error) {
       expect((error as TxtDecodeError).code).toBe('BINARY');
     }

@@ -21,7 +21,7 @@ import {
   type ImportProgressState,
 } from '../src/components/ImportProgressModal';
 import { Button, Card, Divider, Section } from '../src/components/ui';
-import { importTxtBook, pickTxtFile } from '../src/services/bookImport';
+import { importBook, pickBookFile } from '../src/services/bookImport';
 import { useAppStore } from '../src/stores/appStore';
 import { colors, radius, spacing, type } from '../src/theme';
 
@@ -35,7 +35,7 @@ export default function OnboardingScreen() {
   const [embeddingRecord, setEmbeddingRecord] = useState<ProviderConfigRecord | null>(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<ImportProgressState>({
-    title: '导入 TXT',
+    title: '导入书籍',
     label: '准备导入…',
     percent: 0,
   });
@@ -70,18 +70,18 @@ export default function OnboardingScreen() {
   }
 
   async function handleImport(): Promise<void> {
-    const asset = await pickTxtFile();
+    const asset = await pickBookFile();
     if (!asset) return;
     setImporting(true);
-    setProgress({ title: '导入 TXT', label: '准备导入…', percent: 0 });
+    setProgress({ title: '导入书籍', label: '准备导入…', percent: 0 });
     try {
       const db = getDatabase();
-      const result = await importTxtBook({
+      const result = await importBook({
         db,
         asset,
         onProgress: (value) =>
           setProgress({
-            title: '导入 TXT',
+            title: '导入书籍',
             label: indexStageLabel(value),
             percent: value.percent,
           }),
@@ -221,15 +221,16 @@ export default function OnboardingScreen() {
               <Card style={styles.intro}>
                 <Text style={styles.introTitle}>导入第一本书</Text>
                 <Text style={styles.introBody}>
-                  支持 UTF-8 / UTF-16 的 TXT，最大 50MB。导入后会立即建立本地词法索引，
-                  飞行模式下也能阅读、划词与搜索。GBK 编码留待 M1 支持。
+                  支持 TXT（UTF-8 / UTF-16 / GBK，最大 50MB）与 EPUB（含图片、目录，
+                  最大 100MB）。导入后会立即建立本地词法索引，飞行模式下也能阅读、
+                  划词与搜索。
                 </Text>
                 <Divider />
                 <Text style={styles.introHint}>
                   书籍文件会复制到 App 私有目录，删除 App 时会一并清除。
                 </Text>
               </Card>
-              <Button title="选择 TXT 文件" onPress={handleImport} loading={importing} />
+              <Button title="选择文件" onPress={handleImport} loading={importing} />
               <Button
                 title="稍后导入，先进入书架"
                 variant="ghost"

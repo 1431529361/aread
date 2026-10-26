@@ -22,7 +22,9 @@ import {
   type HighlightRecord,
 } from '../../src/db/repositories/highlights';
 import { getDatabase } from '../../src/db/client';
-import { loadBookText } from '../../src/services/bookContent';
+import { loadBookContent } from '../../src/services/bookContent';
+import { loadEpubDocuments } from '../../src/services/epubContent';
+import { chunkEpubDocuments } from '../../src/core/rag/epubChunks';
 import { deleteBookCompletely } from '../../src/services/bookImport';
 import { indexBook, type IndexProgress } from '../../src/services/indexing';
 import { useAppStore } from '../../src/stores/appStore';
@@ -91,17 +93,32 @@ export default function BookDetailScreen() {
     setIndexProgress(null);
     try {
       const db = getDatabase();
-      const text = await loadBookText(book);
-      await indexBook({
-        db,
-        userId: 'local',
-        bookId: book.id,
-        content: text,
-        charCount: text.length,
-        strategy: 'parent-child',
-        embed: null,
-        onProgress: setIndexProgress,
-      });
+      const content = await loadBookContent(book);
+      if (content.format === 'epub' && content.epub) {
+        const documents = await loadEpubDocuments(content.epub);
+        const charCount = documents.reduce((sum, doc) => sum + doc.text.length, 0);
+        await indexBook({
+          db,
+          userId: 'local',
+          bookId: book.id,
+          chunks: chunkEpubDocuments(documents),
+          charCount,
+          embed: null,
+          onProgress: setIndexProgress,
+        });
+      } else {
+        const text = content.text ?? '';
+        await indexBook({
+          db,
+          userId: 'local',
+          bookId: book.id,
+          content: text,
+          charCount: text.length,
+          strategy: 'parent-child',
+          embed: null,
+          onProgress: setIndexProgress,
+        });
+      }
       bumpLibrary();
       await load();
     } catch (caught) {
