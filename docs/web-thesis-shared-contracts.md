@@ -1,10 +1,10 @@
 # Web 毕设共享接口与协作约定
 
-文档版本：SC-1（2026-10-28）。性质：目标接口规范，供阶段实施和AI交接使用；不表示这些接口已经实现，也不是业务代码开工授权。
+文档版本：SC-1.1（2026-10-28）。性质：目标接口规范，供阶段实施和AI交接使用；不表示这些接口已经实现，也不是业务代码开工授权。SC-1.1补齐模块细化时的内容快照、重放校验与记忆生命周期约束；尚未有已上线协议，消息schemaVersion仍为1。
 
-阅读顺序：[总方案](web-thesis-plan.md) → 本文 → 当阶段实施方案 → 当前代码与阶段报告。P0先按 [P0方案](web-thesis-p0-plan.md) 建立旧版基线，不提前套用新版协议。
+阅读顺序：[总方案](web-thesis-plan.md) → 本文 → [RAG实施方案](web-thesis-rag-plan.md) 或 [记忆实施方案](web-thesis-memory-plan.md) → 当前代码与阶段报告。P0先按 [P0方案](web-thesis-p0-plan.md) 建立旧版基线，不提前套用新版协议。
 
-本文约束模块间数据与责任，不决定RAG分块参数、记忆抽取提示词、相关性阈值或具体SQL迁移脚本；这些在对应模块详细方案中制定。文中的类型是结构说明，项目仍使用原生JavaScript，不要求迁移TypeScript。
+本文约束模块间数据与责任；分块参数、抽取条件、冲突策略和迁移步骤在对应模块方案中细化。文中的类型是结构说明，项目仍使用原生JavaScript，不要求迁移TypeScript。
 
 ## 1. 不可违反的边界
 
@@ -95,9 +95,11 @@ P1a复用这个现有路径，前端不再发送Agent开关。目标请求：
 | action | 可选，默认ask；枚举ask/explain/translate/summarize/rewrite，是用户操作线索，不是跳过取证的授权 |
 | provider/model | 可省略或null，由服务端按已存配置解析；不接受Key或任意临时URL；未知配置明确报错，不偷偷换模型 |
 
-进入工具前必须完成鉴权、书籍权限、会话归属、字段校验及本次提供商解析。bookName由服务端读取；不能信任客户端伪造书名来决定原文依据。
+新请求进入工具前必须完成鉴权、书籍权限、会话归属、字段校验及本次提供商解析。bookName由服务端读取；不能信任客户端伪造书名来决定原文依据。
 
 不得接受客户端提供的userId、messages、systemPrompt、memories、evidence、工具策略或预算来替换服务端值。书籍ID与会话不匹配返回409；未授权或不存在的资源均返回404，避免枚举。
+
+已有requestId先校验认证、请求记录归属/原指纹和仍可访问的会话，再按第10节重放；不要求原Key仍有效或原文版本仍相同。已删除的来源书籍可以使引用不可用，但不应触发重新生成；会话已删除则记录不可再读，返回404。
 
 请求规范化规则对同一次重发保持稳定；去重摘要使用客户端提交的语义字段，包括省略字段的固定默认值，不因之后默认模型变化而重新执行已有请求。
 
@@ -113,6 +115,8 @@ P1a复用这个现有路径，前端不再发送Agent开关。目标请求：
 | /api/memories及/api/memory-settings | P2按第8节新增或扩展管理能力 |
 
 P1a在同一个Web变更中迁移前后端请求与事件消费者；核对全部Web调用者后移除旧/api/agent/stream以及无调用者的旧问答路径，不保留两套问答业务作为兼容层。不改Android调用者。旧history数据不删除，但新问答不再调用POST /api/history。
+
+独立task入口把taskType映射为固定的用户操作描述，消息metadata.origin=task_action，并保存原始任务参数；它不是用户自由表达，不参与普通记忆抽取。普通ask消息metadata.origin=user_text。请求指纹包含入口和原始语义参数，不使用会变的模型提示文本作指纹。
 
 P1a不要求无限分页或新历史框架；若使用分页，返回明确的hasMore/游标，并保证UI能取到完整历史，不能把上下文窗口过滤伪装成分页。
 
@@ -197,7 +201,7 @@ Locator = {
 共享语义签名（目标接口，不是当前已存在的函数签名）：
 
 ```text
-retrieveAsync({ userId, bookId, query, topK, signal, deadlineAt })
+retrieveAsync({ userId, bookId, query, topK, signal, deadlineAt, expectedContentHash })
   -> RetrievalResult
 
 RetrievalResult = {
@@ -230,6 +234,8 @@ EvidenceCandidate = {
 - empty不是异常，unavailable需给出可识别原因；向量失败但BM25有结果为ok+warnings，不把整个请求报错或仍伪称向量成功。
 - diagnostics.paths记录本次实际路径。hybrid只在两路实际参与召回/融合时使用，不从建库mode推断；score不是概率，不跨评分类型直接比较。
 - 取消/总时限耗尽以可识别异常交给上层终止，不转成empty。
+- P1b之后expectedContentHash必须来自服务端RequestContext中已读取的规范文本，不能由模型指定；索引内容与其不匹配返回unavailable/INDEX_STALE。一次检索固定一个索引版本，不混合重建前后块。
+- P1a尚未落地规范文本时expectedContentHash可为null，这是阶段性未实现说明，不是P1b之后跳过快照检查的开关。
 - P1b之后普通RAG候选的bookId、contentHash、locator必须与已授权内容一致。工具可增加方法但不能删掉这些共享字段；父块/邻接扩展也返回真实连续原文区间，多个不连续区间用多条候选。
 - RAG不分配E1，不生成引用语法、不落会话消息；同一检索能力也可供评测脚本调用。
 
@@ -242,7 +248,7 @@ ToolResult = {
   status: ok | empty | unavailable | error,
   candidates: EvidenceCandidate[],
   data: object | null,
-  diagnostics: { paths: array, elapsedMs: number, warnings: AppError[] },
+  diagnostics: { indexVersion: string | null, paths: array, elapsedMs: number, warnings: AppError[] },
   truncated: boolean,
   error: AppError | null
 }
@@ -319,7 +325,8 @@ MemoryView = {
   source: {
     type: user_message | user_edit | user_confirmation | legacy,
     conversationId: string | null,
-    messageId: integer | null
+    messageId: integer | null,
+    range: null | { start: integer, end: integer }
   },
   createdAt: string,
   updatedAt: string,
@@ -328,13 +335,13 @@ MemoryView = {
 ```
 
 - 存储记录另带userId，不依赖前端提交身份；所有读写方法必须接收服务端userId。
-- scope=user要求bookId=null；scope=book要求有效且属于用户的bookId。reading_goal/open_question首版限定book范围。
+- scope=user要求bookId=null；新建或召回book范围记忆要求有效且属于用户的bookId。reading_goal/open_question首版限定book范围。删除书籍后残留书级条目置expired，只能在本人管理页查看/删除，不能召回或偷偷改成user范围。
 - key用于同类事实/偏好的冲突匹配；具体键表与合并策略由记忆详细方案负责，不直接拿content字符串代替结构化身份。
 - revision每次变更递增；candidate不能用于回答，completed用于已完成阅读目标/已解决问题，不再作为当前待办召回。
 - 明确稳定陈述可以active并提示；不确定推断只能candidate待用户确认。助手、书籍、引用内容不能成为自动写入用户事实的来源。
-- 来源引用只允许当前用户自己的用户消息；用户编辑/确认要记录新操作来源，不能继续冒称原消息逐字表达了修改后的内容。
+- 来源引用只允许当前用户自己的用户消息；source.range是该消息原始question内的UTF-16半开区间，不是书籍Locator。用户编辑/确认记录新操作来源，无法指向原话时range为null，不能继续冒称原消息逐字表达了修改后的内容。
 - source不嵌入完整历史聊天；需要查看时经会话鉴权读取。来源会话已删时返回来源不可用，不猜造来源。
-- 老记忆缺来源/作用域/状态时标legacy，迁移如何确认在P2说明，不凭迁移把推断变成已确认事实。
+- 老记忆缺来源/作用域/状态时标legacy，迁移为候选并通过受限classification确认，不凭迁移把推断变成已确认事实。
 
 ### 8.2 召回与注入
 
@@ -363,25 +370,29 @@ SSE的memory_context可以显示本轮已注入内容；长期消息metadata只�
 
 - 普通回答成功落库后至多调度一次抽取；P2决定何时批量处理，但同一来源不能重复抽取造成重复条目。
 - 明确“记住/更正/忘记”可走经验证的用户操作路径，不等待普通批量抽取；操作成功才能宣称已记住/已删除，不能由LLM直接许诺成功。
-- 每用户有memoryEpoch。明确更正、删除、清空、暂停等会使epoch递增；后台任务提交前验证epoch和来源仍存在。过期任务丢弃或在重新验证后处理，不能覆盖新决定。
-- epoch不能单独防止未来重抽旧内容：还需来源处理水位/拒绝记录阻止旧消息重新成为候选。删除后的旧来源必须仍被视为已处理，不能因条目消失而重新抽取。
-- 用户关闭enabled时停止长期记忆召回和自动写入，管理界面仍可查看/删除；不会清空聊天或历史记忆。重新开启只处理之后的新来源，不偷偷回溯暂停期间的对话。
-- 删除不保留可召回的正文副本；最小防回写记录不得保存敏感正文。删除具体存储清理在P2详细方案验证。
-- 候选确认与手动编辑使用revision检查；后台模型结果不能无条件覆盖用户刚编辑的记录。
+- 每用户有memoryEpoch。明确更正、确认、完成、删除、清空、暂停/恢复与删除来源会话会使epoch递增；同时把用户级blockedThroughMessageId推进至该用户所有会话已接纳用户消息的最大ID，含未完成/未调度消息。旧任务不能换新epoch重试。
+- epoch不能单独防止未来重抽旧内容：来源处理记录与屏障一起保留。代价是这些操作也会跳过其他尚未处理的旧来源；首版接受这一保守取舍，新用户消息可重新表达。
+- 用户关闭enabled时停止长期记忆召回和自动写入，管理界面仍可查看/编辑/删除；不会清空聊天或历史记忆。重新开启再次推进屏障，只处理之后的新来源，不偷偷回溯暂停期间的对话。
+- 删除不保留业务可召回的正文副本；最小防回写记录只存标识和状态，不随源消息级联消失。数据库备份/WAL的物理清除不在此保证内，不能擅自销毁用户备份。
+- 候选确认与手动编辑使用revision检查；同键active更新必须作废受影响旧候选并递增其revision，后台结果不能无条件覆盖人工值。
+- 普通自动抽取要求来源请求completed；已验证的显式记忆管理命令有独立原子操作回执，允许在最终解释生成前执行。后续模型解释失败不回滚已经成功的用户管理操作；重放不得重复执行该操作。
 
 ### 8.4 目标管理API（P2同步更新前端）
 
 | 方法与路径 | 输入与结果 |
 | --- | --- |
 | GET /api/memories | 可选bookId/status过滤；返回 `{ memories: MemoryView[], epoch }`，仍只能返回当前用户数据 |
-| PUT /api/memories/:id | `{ expectedRevision, content }`；验证并更新、递增revision及epoch，返回最新MemoryView |
-| POST /api/memories/:id/confirm | `{ expectedRevision }`；确认candidate，处理冲突后返回最新条目及epoch |
-| DELETE /api/memories/:id | `{ expectedRevision }`；成功后返回 `{ deleted: true, epoch }` |
-| DELETE /api/memories | `{ expectedEpoch }`；清空内容且建立防回写屏障，返回最新epoch |
+| PUT /api/memories/:id | `{ expectedRevision, content }`；验证并更新、递增revision及epoch，返回 `{ memory, epoch, memoryChanges }` |
+| POST /api/memories/:id/confirm | `{ expectedRevision, expectedEpoch }`；legacy额外允许classification={kind,key,scope,bookId}且经服务端校验，成功返回 `{ memory, epoch, memoryChanges }` |
+| POST /api/memories/:id/complete | `{ expectedRevision }`；仅active的reading_goal/open_question可完成，返回 `{ memory, epoch, memoryChanges }` |
+| DELETE /api/memories/:id | `{ expectedRevision }`；成功后返回 `{ deleted: true, epoch, memoryChanges }` |
+| DELETE /api/memories | `{ expectedEpoch }`；清空内容且建立屏障，返回 `{ cleared: true, epoch }` |
 | GET /api/memory-settings | 返回 `{ enabled, epoch }` |
 | PUT /api/memory-settings | `{ enabled, expectedEpoch }`；返回最新设置 |
 
-版本不匹配返回409 MEMORY_CONFLICT，前端刷新并保留用户输入，不盲目覆盖。上述路径是目标，不得宣称当前均已实现。scope/kind/key修改、过期策略和更多管理操作待记忆详细方案定义，不擅自扩展任意字段写接口。
+memoryChanges为不含正文的 `{ id, revision, change }` 数组，change可为created/updated/candidate/confirmed/completed/deleted/skipped。删除的revision表示被删除时的最后版本，不虚构仍存在的新MemoryView。
+
+版本不匹配返回409 MEMORY_CONFLICT，前端刷新并保留用户输入，不盲目覆盖。上述路径是目标，不得宣称当前均已实现。除legacy确认的受限classification外，不开放任意scope/kind/key改写；内部键、过期与来源策略见记忆实施方案。
 
 ## 9. 长任务共享结果
 
@@ -405,11 +416,13 @@ TaskResult = {
 }
 ```
 
-completed表示约定任务执行完，不自动意味着全文覆盖；coverage.mode单独表达采样程度。进度为已结束单元数/总单元数，结束不等于成功，failedUnits另计。
+completed表示约定任务执行完，不自动意味着全文覆盖；coverage.mode单独表达采样程度。completedUnits按本协议特指成功或失败后已结束的单元数，failedUnits是其中失败的子集，成功数为两者之差；取消后未结束的单元不计入completedUnits。UI写“已处理”而不是“成功完成”。
 
 只有规范文本连续区间成功处理并去重后才能统计processedChars；旧结果没记录范围时用unknown/null，不拿前八章标题数推算100%。全书覆盖详细算法不属于本共享约定。
 
-TaskResult经问答服务转换为统一回答，不把LLM生成的摘要当book_excerpt登记。缓存复用必须至少匹配用户、书籍、任务类型和contentHash；依赖用户阅读目标时，还须匹配注入记忆版本或不共享复用，不能把旧目标下笔记当新目标结果。
+TaskResult为partial且有可用正文时，请求可以completed，但UI必须根据metadata.task.status显示“部分结果”；TaskResult为failed/cancelled时请求对应failed/cancelled，不标完整成功。无可用正文的partial按failed处理。
+
+TaskResult经问答服务转换为统一回答，不把LLM生成的摘要当book_excerpt登记。缓存复用必须至少匹配用户、书籍、任务类型和contentHash；依赖用户阅读目标时，还须匹配注入记忆版本或不共享复用，不能把旧目标下笔记当新目标结果。contentHash未知的旧缓存只作为明确标注的历史结果查看，不自动当作当前版本任务结果。
 
 自动识别明确长任务可调用现有编排；意图不明确先澄清。书架快捷按钮和聊天入口复用执行/缓存逻辑，不同时启动两份任务；force=true是用户明确重生成，不由模型暗中设置。
 
@@ -419,7 +432,7 @@ TaskResult经问答服务转换为统一回答，不把LLM生成的摘要当book
 
 问答服务是请求协调者，负责以下顺序：
 
-1. 校验请求和权限，检查同用户requestId是否已存在，再解析/创建会话。
+1. 校验认证、requestId及结构，先检查同用户已有请求的指纹和会话权限；已终结请求直接重放，不再要求Key/模型/原文仍可用。只有新请求才执行提供商、当前书籍/选文版本校验并解析/创建会话。
 2. 对同一会话串行接纳生成与压缩：繁忙返回409 CONVERSATION_BUSY，不长时间持有SQLite写事务等待API。
 3. 在短事务中创建请求记录、用户消息和待完成助手消息，保留两条messageId；随后才发start并调用模型。
 4. 准备工作窗口、适用记忆与证据，执行自动决策/工具/任务，汇总正文和轨迹。
@@ -473,7 +486,9 @@ AssistantMetadata = {
 - 用户停止用fetch AbortController断开；服务端只对未正常结束的响应断开传播取消，不因正常close事件取消已完成结果。
 - 取消或上游失败保留已产生的部分正文并标相应状态；不进入后续模型上下文、不启动自动记忆抽取。无正文也不能用空字符串冒充成功答案。
 - completed持久化已经提交后发生的客户端断线，不回滚已完成状态；客户端以查询结果为准。提交失败则不能发成功end。
-- 记忆后台失败不把已成功答案改成失败；postProcessing区分pending/completed/skipped/failed，用户只有在实际完成后才能看见“已保存记忆”的确认。
+- 记忆后台失败不把已成功答案改成失败；postProcessing结构为 `{ status, memoryChanges, error }`，status为pending/completed/skipped/failed，error为AppError或null；memoryChanges沿用第8节，pending时不得虚构已保存条目。
+- 显式管理命令已提交的memoryChanges从操作回执返回，并将该来源标已处理；不会再由普通后处理抽取第二遍。
+- 来源因屏障/重启变为skipped/failed时，同事务聚合受影响的pending后处理状态，不能留下永久pending；纯跳过且无实际记忆条目操作时memoryChanges=[]。聚合规则见记忆方案第7节。
 - 自动/手动压缩与同会话生成使用同一串行边界，避免在压缩过程中追加的消息被旧统计覆盖。基础上下文超限检查必须发生在模型请求前。
 
 ## 11. SSE与前端状态契约
@@ -582,9 +597,9 @@ metrics最小字段：elapsedMs、timeToFirstAnswerMs（无正文为null）、to
 2. 接手前列明已完成阶段、未实现字段、计划修改文件和验证命令。若总方案与本文不一致，先指出差异，不私自选一个实现。
 3. RAG负责人只确定检索内部实现；记忆负责人只确定记忆内部实现。server/database/public/llm-client的共享改动由当阶段集成负责人合入，避免并发覆盖。
 4. 调整字段名、枚举、引用格式、偏移单位、错误语义或SSE终态时，先更新本文版本与变更说明，再同步生产者、消费者、测试和模块方案；不靠双方各加兼容分支解决分歧。
-5. 数据库迁移需一个连续编号/版本方案，双方不得独立创建相同列或重复执行迁移。具体DDL与备份、回滚、旧记录显示方案在实施阶段写清并验证。
+5. 数据库迁移由P1a建立单一登记机制，预留web_001_request_contract、web_002_rag_locator、web_003_memory_lifecycle的顺序；若届时代码已有编号体系，集成负责人统一映射更新文档，双方不得另起两套迁移或重复加列。具体DDL/备份/回滚在实施阶段验证。
 6. 每阶段报告记录文件、接口变化、迁移、测试/未测、图表数据与已知限制，放docs/；只有验收后才能把相应契约状态改为已实现。
-7. 本文完成后仍需要RAG、记忆和P1a各自的实施方案；它不是完整代码任务清单，不允许用“实现本文全部内容”绕过逐阶段确认。
+7. RAG与记忆详细方案已另文提供；P1a具体实施方案仍须在其阶段开始前制定。本文不是完整代码任务清单，不允许用“实现本文全部内容”绕过逐阶段确认。
 
 交接提示可直接使用：
 

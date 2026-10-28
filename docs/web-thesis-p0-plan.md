@@ -2,9 +2,9 @@
 
 日期：2026-10-28。状态：待用户确认实施；本文件仅为方案，未执行下述代码改动、在线模型实验或浏览器验收。
 
-关联：[总方案](web-thesis-plan.md)、[共享接口与协作约定SC-1](web-thesis-shared-contracts.md)、[改造前只读检查记录](web-thesis-baseline-check.md)。
+关联：[总方案](web-thesis-plan.md)、[共享接口与协作约定SC-1.1](web-thesis-shared-contracts.md)、[改造前只读检查记录](web-thesis-baseline-check.md)。
 
-共享约定是P1a及以后分阶段落地的目标接口；P0仍采集当前接口的基线，不提前把请求结构、SSE或记忆数据换成新版。
+共享约定是P1a及以后分阶段落地的目标接口；P0仍采集当前接口的基线，不提前把请求结构、SSE或记忆数据换成新版。后续 [RAG实施方案](web-thesis-rag-plan.md) 和 [记忆实施方案](web-thesis-memory-plan.md) 不改变P0范围。
 
 ## 1. 为什么现在做P0
 

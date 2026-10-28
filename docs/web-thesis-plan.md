@@ -6,7 +6,9 @@
 
 近期里程碑：2026-11-07开题答辩；其他论文和系统里程碑在2027年，具体日期待学校安排。不要求开题前完成所有改造。P0详见 [web-thesis-p0-plan.md](web-thesis-p0-plan.md)。
 
-交接与实施阅读顺序：本总方案 → [共享接口与协作约定SC-1](web-thesis-shared-contracts.md) → 对应阶段实施方案 → 当前代码与阶段报告。共享约定定义模块间目标接口，不代表已实现；RAG、记忆和P1a的详细实现步骤仍需另行细化。
+交接与实施阅读顺序：本总方案 → [共享接口与协作约定SC-1.1](web-thesis-shared-contracts.md) → 对应阶段实施方案 → 当前代码与阶段报告。共享约定定义模块间目标接口，不代表已实现。
+
+模块实施方案已细化：[RAG（P1b＋P3-RAG）](web-thesis-rag-plan.md)、[记忆（P2＋P3-记忆）](web-thesis-memory-plan.md)，均包含结构/迁移、算法流程、API/UI、子任务和测试。P1a的具体实施方案仍需在其阶段开始前制定；不要绕过统一问答前置直接让两个AI并行改共享文件。
 
 ## 0. 结论与边界
 
@@ -248,7 +250,7 @@ flowchart TD
 
 #### P1a专项验收与拟改范围
 
-P1a主要涉及 `server.js`（统一问答服务）、`agent.js`（自动决策和证据门控）、`llm-client.js`（流式工具数据与取消）、`conversation.js`（一致的上下文/后处理入口）、`public/`（单入口和状态展示）；按需修改 `tools/` 和 `orchestrator.js` 的调用契约、范围与状态，不在此阶段重做检索算法或全书任务内容。API与共享字段以 [SC-1](web-thesis-shared-contracts.md) 为准：问答复用 `/api/ask-stream`，实施前核实全部Web调用者并同步迁移；不顺手改Android，也不为假想兼容保留两套业务实现。
+P1a主要涉及 `server.js`（统一问答服务）、`agent.js`（自动决策和证据门控）、`llm-client.js`（流式工具数据与取消）、`conversation.js`（一致的上下文/后处理入口）、`public/`（单入口和状态展示）；按需修改 `tools/` 和 `orchestrator.js` 的调用契约、范围与状态，不在此阶段重做检索算法或全书任务内容。API与共享字段以 [SC-1.1](web-thesis-shared-contracts.md) 为准：问答复用 `/api/ask-stream`，实施前核实全部Web调用者并同步迁移；不顺手改Android，也不为假想兼容保留两套业务实现。
 
 | 场景 | 验收要求 |
 | --- | --- |
