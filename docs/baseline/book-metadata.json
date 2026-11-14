@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-11-14T08:49:45.170Z",
+  "note": "只读检查；不根据书名补齐本地不存在的内容",
+  "books": [
+    {
+      "id": "confessions",
+      "title": "忏悔录（卢梭）",
+      "file": "books/__defaults/忏悔录 作者：卢梭.txt",
+      "exists": true,
+      "bytes": 1383492,
+      "encoding": "utf-8",
+      "encodingConfidence": 0.99,
+      "sha256": "2a9f2b6bf3f4419a922577aa81450fc12b57922c3d80f78c8e76235fac12b0df",
+      "decodedChars": 463787,
+      "replacementChars": 0,
+      "chapterCount": 12,
+      "totalChars": 463787,
+      "lineCount": 1902,
+      "chapterCharTotal": 457569,
+      "medianChapterChars": 33868,
+      "maxChapterChars": 63144,
+      "longChaptersOver5000": 12,
+      "firstChapters": [
+        "第一章",
+        "第二章",
+        "第三章",
+        "第四章",
+        "第五章"
+      ],
+      "lastChapters": [
+        "第十章",
+        "第十一章",
+        "第十二章"
+      ],
+      "excerptHeuristic": "章节数正常，完整性仍需人工确认"
+    },
+    {
+      "id": "one-hundred-years",
+      "title": "百年孤独",
+      "file": "books/__defaults/百年孤独.txt",
+      "exists": true,
+      "bytes": 750557,
+      "encoding": "utf-8",
+      "encodingConfidence": 0.99,
+      "sha256": "cd3ef3be0d5ee2c27d7e9aa11396d606310550b7b82348231c456c28bffae01e",
+      "decodedChars": 251753,
+      "replacementChars": 0,
+      "chapterCount": 20,
+      "totalChars": 251753,
+      "lineCount": 1309,
+      "chapterCharTotal": 247727,
+      "medianChapterChars": 12388,
+      "maxChapterChars": 15237,
+      "longChaptersOver5000": 20,
+      "firstChapters": [
+        "第一章",
+        "第二章",
+        "第三章",
+        "第四章",
+        "第五章"
+      ],
+      "lastChapters": [
+        "第十八章",
+        "第十九章",
+        "第二十章"
+      ],
+      "excerptHeuristic": "章节数正常，完整性仍需人工确认"
+    }
+  ]
+}

@@ -9,20 +9,23 @@ const iconv = require('iconv-lite');
 const jschardet = require('jschardet');
 require('dotenv').config();
 
-const { initDB, getDB, isVecAvailable } = require('./database');
+const { initDB, getDB, isVecAvailable, getBooksDir } = require('./database');
 const { authMiddleware, registerHandler, loginHandler, meHandler, addDefaultBooksForUser } = require('./auth');
 const { runAgentLoop } = require('./agent');
 const rag = require('./rag');
 const embeddingMod = require('./embedding');
+const rerankMod = require('./rerank');
 const llmClient = require('./llm-client');
 const { runTask, listTasks } = require('./orchestrator');
 const conv = require('./conversation');
+const requestStore = require('./request-store');
+const { createQaService } = require('./qa-service');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
-const BOOKS_DIR = path.join(__dirname, 'books');
+const BOOKS_DIR = getBooksDir();
 
 const ALLOWED_EXTENSIONS = ['.txt', '.pdf', '.epub', '.mobi'];
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -36,8 +39,17 @@ let db;
 async function startServer() {
     db = await initDB();
 
-    // 注入 Key 读取能力（解密逻辑在本文件），供 embedding 模块解析向量化提供商
+    // 注入 Key 读取能力（解密逻辑在本文件），供 embedding / rerank 模块解析提供商
     embeddingMod.init({ getApiKey: getStoredApiKey });
+    rerankMod.init({ getApiKey: getStoredApiKey });
+
+    // 统一问答服务（P1a）：单一入口、唯一完成责任、证据门控
+    const qaService = createQaService({
+        conv, rs: requestStore, llmClient,
+        agent: require('./agent'), rag, orchestrator: require('./orchestrator'),
+        getProviderConfig, resolveApiKey, getBookContent
+    });
+    requestStore.interruptStaleRunning();
 
 app.use(cors());
 app.use(express.json());
@@ -367,6 +379,8 @@ app.get('/api/embedding-settings', (req, res) => {
     const settings = embeddingMod.getEmbeddingSettings(req.user.id);
     const keyRow = db.prepare('SELECT masked_key FROM api_keys WHERE user_id = ? AND provider = ?')
         .get(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER);
+    const customKeyRow = db.prepare('SELECT masked_key FROM api_keys WHERE user_id = ? AND provider = ?')
+        .get(req.user.id, embeddingMod.CUSTOM_EMBED_KEY_PROVIDER);
     // 预置提供商（智谱/硅基流动）复用对话 Key，这里只报告是否已配置
     const presetKeyStatus = {};
     for (const pid of Object.keys(embeddingMod.PRESET_PROVIDERS)) {
@@ -381,6 +395,12 @@ app.get('/api/embedding-settings', (req, res) => {
             hasKey: !!(keyRow || process.env.EMBED_API_KEY),
             maskedKey: keyRow ? keyRow.masked_key : null
         },
+        custom: {
+            baseUrl: settings.custom.baseUrl || '',
+            model: settings.custom.model || '',
+            hasKey: !!(customKeyRow || process.env.CUSTOM_EMBED_API_KEY),
+            maskedKey: customKeyRow ? customKeyRow.masked_key : null
+        },
         presetKeyStatus,
         vectorAvailable: isVecAvailable(),
         active: active ? { providerId: active.providerId, providerName: active.providerName, model: active.model } : null
@@ -388,11 +408,12 @@ app.get('/api/embedding-settings', (req, res) => {
 });
 
 app.put('/api/embedding-settings', async (req, res) => {
-    const { provider, aliyunBaseUrl, aliyunModel, aliyunApiKey } = req.body;
+    const { provider, aliyunBaseUrl, aliyunModel, aliyunApiKey, customBaseUrl, customModel, customApiKey } = req.body;
     try {
         embeddingMod.saveEmbeddingSettings(req.user.id, {
             provider,
-            aliyun: { baseUrl: aliyunBaseUrl, model: aliyunModel }
+            aliyun: { baseUrl: aliyunBaseUrl, model: aliyunModel },
+            custom: { baseUrl: customBaseUrl, model: customModel }
         });
 
         // 可选：保存阿里云 Embedding Key（先实际调一次 embeddings 接口校验）
@@ -428,6 +449,39 @@ app.put('/api/embedding-settings', async (req, res) => {
             `).run(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER, encryptedKey, maskedKey, new Date().toISOString());
         }
 
+        // 可选：保存通用自定义 Embedding Key（先实际调一次 embeddings 接口校验）
+        if (customApiKey) {
+            if (typeof customApiKey !== 'string' || customApiKey.length < 20) {
+                return res.status(400).json({ error: 'API密钥长度不足，请检查密钥是否完整' });
+            }
+            const settings = embeddingMod.getEmbeddingSettings(req.user.id);
+            if (!settings.custom.baseUrl || !settings.custom.model) {
+                return res.status(400).json({ error: '请先填写自定义接口地址（Base URL）和模型名称' });
+            }
+            const testEmbedder = {
+                providerId: 'custom',
+                endpoint: settings.custom.baseUrl.replace(/\/+$/, '') + '/embeddings',
+                model: settings.custom.model,
+                dims: embeddingMod.EMBED_DIMS,
+                apiKey: customApiKey
+            };
+            try {
+                await embeddingMod.validateEmbedder(testEmbedder);
+            } catch (e) {
+                return res.status(400).json({ error: `自定义 Embedding 密钥校验失败: ${e.message}` });
+            }
+            const encryptedKey = encrypt(customApiKey);
+            const maskedKey = customApiKey.substring(0, 8) + '****' + customApiKey.substring(customApiKey.length - 4);
+            db.prepare(`
+                INSERT INTO api_keys (user_id, provider, encrypted_key, masked_key, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, provider) DO UPDATE SET
+                    encrypted_key = excluded.encrypted_key,
+                    masked_key = excluded.masked_key,
+                    last_updated = excluded.last_updated
+            `).run(req.user.id, embeddingMod.CUSTOM_EMBED_KEY_PROVIDER, encryptedKey, maskedKey, new Date().toISOString());
+        }
+
         const active = embeddingMod.resolveEmbedder(req.user.id);
         res.json({
             success: true,
@@ -442,6 +496,74 @@ app.delete('/api/embedding-settings/aliyun-key', (req, res) => {
     db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?')
         .run(req.user.id, embeddingMod.ALIYUN_KEY_PROVIDER);
     res.json({ success: true, message: '阿里云 Embedding 密钥已删除' });
+});
+
+app.delete('/api/embedding-settings/custom-key', (req, res) => {
+    db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?')
+        .run(req.user.id, embeddingMod.CUSTOM_EMBED_KEY_PROVIDER);
+    res.json({ success: true, message: '自定义 Embedding 密钥已删除' });
+});
+
+// ==================== Rerank（重排序）设置 Routes ====================
+
+app.get('/api/rerank-settings', (req, res) => {
+    const cfg = rerankMod.getRerankSettings(req.user.id);
+    const keyRow = db.prepare('SELECT masked_key FROM api_keys WHERE user_id = ? AND provider = ?')
+        .get(req.user.id, rerankMod.RERANK_KEY_PROVIDER);
+    const active = rerankMod.resolveReranker(req.user.id);
+    res.json({
+        enabled: cfg.enabled,
+        baseUrl: cfg.baseUrl || '',
+        model: cfg.model || '',
+        topN: cfg.topN,
+        hasKey: !!(keyRow || process.env.RERANK_API_KEY),
+        maskedKey: keyRow ? keyRow.masked_key : null,
+        active: active ? { model: active.model, topN: active.topN } : null
+    });
+});
+
+app.put('/api/rerank-settings', async (req, res) => {
+    const { enabled, baseUrl, model, topN, rerankApiKey } = req.body;
+    try {
+        rerankMod.saveRerankSettings(req.user.id, { enabled, baseUrl, model, topN });
+
+        if (rerankApiKey) {
+            if (typeof rerankApiKey !== 'string' || rerankApiKey.length < 20) {
+                return res.status(400).json({ error: 'API密钥长度不足，请检查密钥是否完整' });
+            }
+            const cfg = rerankMod.getRerankSettings(req.user.id);
+            const endpoint = rerankMod.normalizeRerankEndpoint(cfg.baseUrl);
+            if (!endpoint || !cfg.model) {
+                return res.status(400).json({ error: '请先填写重排接口地址（Base URL）和模型名称' });
+            }
+            try {
+                await rerankMod.validateReranker({ endpoint, model: cfg.model, apiKey: rerankApiKey, topN: cfg.topN });
+            } catch (e) {
+                return res.status(400).json({ error: `重排密钥校验失败: ${e.message}` });
+            }
+            const encryptedKey = encrypt(rerankApiKey);
+            const maskedKey = rerankApiKey.substring(0, 8) + '****' + rerankApiKey.substring(rerankApiKey.length - 4);
+            db.prepare(`
+                INSERT INTO api_keys (user_id, provider, encrypted_key, masked_key, last_updated)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, provider) DO UPDATE SET
+                    encrypted_key = excluded.encrypted_key,
+                    masked_key = excluded.masked_key,
+                    last_updated = excluded.last_updated
+            `).run(req.user.id, rerankMod.RERANK_KEY_PROVIDER, encryptedKey, maskedKey, new Date().toISOString());
+        }
+
+        const active = rerankMod.resolveReranker(req.user.id);
+        res.json({ success: true, active: active ? { model: active.model, topN: active.topN } : null });
+    } catch (error) {
+        res.status(400).json({ error: error.message || '保存重排设置失败' });
+    }
+});
+
+app.delete('/api/rerank-settings/key', (req, res) => {
+    db.prepare('DELETE FROM api_keys WHERE user_id = ? AND provider = ?')
+        .run(req.user.id, rerankMod.RERANK_KEY_PROVIDER);
+    res.json({ success: true, message: '重排密钥已删除' });
 });
 
 // ==================== Provider Routes ====================
@@ -777,35 +899,22 @@ app.post('/api/ask', async (req, res) => {
 
     const providerId = provider || 'zhipu';
     const providerConfig = getProviderConfig(providerId, req.user.id);
-    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
+    const storedKeysRows = db.prepare('SELECT provider, encrypted_key FROM api_keys WHERE user_id = ?').all(req.user.id);
     const storedKeys = {};
-    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
-    
-    console.log(`[DEBUG] 请求提供商: ${providerId}`);
-    console.log(`[DEBUG] 存储的密钥结构:`, Object.keys(storedKeys));
-    
+    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key }; }
+
     const keyData = storedKeys[providerId] || (providerId === 'zhipu' && storedKeys.encryptedApiKey ? storedKeys : null);
     let apiKey = null;
-    
+
     if (keyData?.encryptedApiKey) {
-        console.log(`[DEBUG] 找到密钥: ${keyData.maskedKey || '未知'}`);
         apiKey = decrypt(keyData.encryptedApiKey);
-        console.log(`[DEBUG] 解密结果: ${apiKey ? apiKey.substring(0, 10) + '...' : '失败(null)'}`);
-    } else {
-        console.log(`[DEBUG] 未找到${providerId}的密钥`);
     }
-    
+
     if (!apiKey) {
         const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
         apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
-        if (apiKey) {
-            console.log(`[DEBUG] 从环境变量获取密钥: ${envKeyMap[providerId] || 'AI_API_KEY'}`);
-        }
         if (!apiKey && providerId.startsWith('custom')) {
             apiKey = process.env.CUSTOM_API_KEY;
-            if (apiKey) {
-                console.log(`[DEBUG] 从环境变量获取自定义提供商密钥: CUSTOM_API_KEY`);
-            }
         }
     }
 
@@ -826,7 +935,8 @@ app.post('/api/ask', async (req, res) => {
             provider: providerConfig.name
         });
     } catch (error) {
-        console.error('AI调用错误:', error);
+        // 只记录状态与消息，不打印上游响应体/完整错误对象（可能回显密钥）
+        console.error('AI调用错误:', error.status || '', error.message);
         
         if (error.message && (error.message.includes('401') || error.message.includes('认证'))) {
             return res.status(401).json({ 
@@ -840,140 +950,8 @@ app.post('/api/ask', async (req, res) => {
     }
 });
 
-app.post('/api/ask-stream', async (req, res) => {
-    const { text, question, bookName, provider, model: clientModel, bookId, conversationId } = req.body;
-    
-    if (!question) {
-        return res.status(400).json({ error: '请提供问题' });
-    }
-
-    const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId, req.user.id);
-    const storedKeysRows = db.prepare('SELECT provider, encrypted_key, masked_key FROM api_keys WHERE user_id = ?').all(req.user.id);
-    const storedKeys = {};
-    for (const r of storedKeysRows) { storedKeys[r.provider] = { encryptedApiKey: r.encrypted_key, maskedKey: r.masked_key }; }
-    
-    const keyData = storedKeys[providerId] || (providerId === 'zhipu' && storedKeys.encryptedApiKey ? storedKeys : null);
-    let apiKey = null;
-    
-    if (keyData?.encryptedApiKey) {
-        apiKey = decrypt(keyData.encryptedApiKey);
-    }
-    
-    if (!apiKey) {
-        const envKeyMap = { zhipu: 'ZHIPU_API_KEY', siliconflow: 'SILICONFLOW_API_KEY' };
-        apiKey = process.env[envKeyMap[providerId]] || process.env.AI_API_KEY;
-        if (!apiKey && providerId.startsWith('custom')) {
-            apiKey = process.env.CUSTOM_API_KEY;
-        }
-    }
-
-    if (!apiKey) {
-        return res.status(403).json({ 
-            error: `未配置${providerConfig.name}的API密钥`,
-            needApiKey: true,
-            provider: providerId
-        });
-    }
-
-    try {
-        const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
-        const contextLimit = conv.getModelContextLimit(model);
-        const bookContext = bookName ? `用户正在阅读的书籍：《${bookName}》\n` : '';
-
-        // ==================== 会话上下文准备 ====================
-        const ctxLLM = { apiKey, providerConfig, model };
-        let conversation = conversationId
-            ? conv.getConversation(req.user.id, conversationId)
-            : null;
-        if (!conversation) {
-            conversation = conv.getOrCreateActiveConversation(req.user.id, bookId || null, providerId, model);
-        }
-
-        const baseSystemPrompt = `你是一个专业的阅读助手，擅长帮助用户理解和分析书籍内容。你当前使用的模型是：${model}。请遵循以下原则：
-1. 如果用户的问题可以直接基于选中的文本回答，请优先依据原文内容作答
-2. 如果用户正在阅读一本已知的书籍（如名著、经典作品），你可以利用自己对该书的了解来回答问题，但必须明确标注哪些是原文内容、哪些是你补充的原著知识
-3. 如果问题与选中文本无关，但你根据书名能够回答，请直接回答，并注明"根据原著"或"根据相关知识"
-4. 回答要条理清晰，重点突出，使用分点或段落组织内容
-5. 对于复杂概念，用通俗易懂的语言解释，必要时举例说明
-6. 不要拒绝回答，尽量给出有帮助的信息
-7. 保持客观中立，尊重原著内容
-8. 当用户询问你是什么模型、是谁、使用什么技术时，如实告知用户你当前使用的模型名称（${model}）`;
-
-        const userContent = text
-            ? `${bookContext}选中的文本：\n"${text}"\n\n问题：${question}`
-            : `${bookContext}问题：${question}`;
-
-        // 落盘用户消息 + 设置标题
-        conv.appendMessage(conversation.id, { role: 'user', content: userContent });
-        conv.maybeSetTitle(conversation.id, question);
-
-        // 检索长期记忆 + 组装携带历史的 messages
-        const memoriesText = conv.formatMemoriesBlock(conv.retrieveMemories(req.user.id, question, 6));
-        const freshConv = conv.getConversation(req.user.id, conversation.id);
-        const messages = conv.buildModelMessages(freshConv, baseSystemPrompt, { memoriesText });
-
-        let fullContent = '';
-
-        // 对话结束后的持久化 + 后处理（压缩 / 记忆抽取），返回最新 token 统计
-        const finalize = async () => {
-            conv.appendMessage(conversation.id, { role: 'assistant', content: fullContent });
-            try {
-                const c2 = conv.getConversation(req.user.id, conversation.id);
-                const compressResult = await conv.maybeAutoCompress(ctxLLM, c2);
-                if (compressResult.compressed) {
-                    res.write(`data: ${JSON.stringify({ type: 'compressed', before: compressResult.before, after: compressResult.after, saved: Math.max(0, compressResult.before - compressResult.after), tokens: compressResult.after, limit: contextLimit, auto: true })}\n\n`);
-                }
-            } catch (e) { console.warn('自动压缩失败:', e.message); }
-            // 记忆抽取（异步，不阻塞响应结束）
-            const recent = conv.getConversationMessages(conversation.id, { windowOnly: true }).slice(-6);
-            conv.extractAndStoreMemories(ctxLLM, req.user.id, conversation.id, recent)
-                .catch(e => console.warn('记忆抽取失败:', e.message));
-            return conv.getConversation(req.user.id, conversation.id).token_estimate;
-        };
-
-        // 统一流式调用：响应确认 2xx 后才写 SSE 头（非 2xx 仍可返回 JSON 错误）
-        try {
-            await llmClient.stream(ctxLLM, {
-                messages,
-                temperature: 0.3,
-                maxTokens: 2000,
-                timeoutMs: 60000,
-                onStart: () => {
-                    res.setHeader('Content-Type', 'text/event-stream');
-                    res.setHeader('Cache-Control', 'no-cache');
-                    res.setHeader('Connection', 'keep-alive');
-                    res.setHeader('X-Accel-Buffering', 'no');
-                    res.write(`data: ${JSON.stringify({ type: 'start', model, provider: providerConfig.name, conversationId: conversation.id, tokens: freshConv.token_estimate, limit: contextLimit })}\n\n`);
-                },
-                onChunk: (content) => {
-                    fullContent += content;
-                    res.write(`data: ${JSON.stringify({ type: 'chunk', content })}\n\n`);
-                }
-            });
-        } catch (streamErr) {
-            // 上游非 2xx：保持既有行为，直接以对应状态码返回 JSON
-            if (streamErr.status && !res.headersSent) {
-                console.error(`${providerConfig.name} API错误:`, streamErr.status, streamErr.body || {});
-                return res.status(streamErr.status).json({ error: `API请求失败: ${streamErr.status}`, provider: providerId });
-            }
-            throw streamErr;
-        }
-
-        const finalTokens = await finalize();
-        res.write(`data: ${JSON.stringify({ type: 'session_update', tokens: finalTokens, limit: contextLimit })}\n\n`);
-        res.write(`data: ${JSON.stringify({ type: 'end', content: fullContent, conversationId: conversation.id })}\n\n`);
-        res.end();
-    } catch (error) {
-        console.error('流式AI调用错误:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ error: `AI服务请求失败: ${error.message || '未知错误'}` });
-        } else {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message || '未知错误' })}\n\n`);
-            res.end();
-        }
-    }
-});
+app.post('/api/ask-stream', (req, res) => qaService.handleAsk(req, res));
+app.get('/api/ask-requests/:requestId', (req, res) => qaService.handleRequestQuery(req, res));
 
 async function callAI(apiKey, selectedText, question, bookName, providerConfig, clientModel) {
     const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
@@ -1006,7 +984,7 @@ async function callAI(apiKey, selectedText, question, bookName, providerConfig, 
         );
         return { answer, model };
     } catch (error) {
-        console.error(`${providerConfig.name} API错误:`, error.status || '', error.body || error.message);
+        console.error(`${providerConfig.name} API错误:`, error.status || '', error.message);
         if (error.status === 401) throw new Error('API密钥认证失败');
         if (error.status) throw new Error(`API请求失败: ${error.status}`);
         throw error;
@@ -1078,111 +1056,7 @@ app.delete('/api/books/:id/index', (req, res) => {
 });
 
 // Agent 流式问答（Function Calling + ReAct）
-app.post('/api/agent/stream', async (req, res) => {
-    const { text, question, bookName, provider, model: clientModel, bookId, conversationId } = req.body;
-    if (!question) return res.status(400).json({ error: '请提供问题' });
-
-    const providerId = provider || 'zhipu';
-    const providerConfig = getProviderConfig(providerId, req.user.id);
-    const apiKey = resolveApiKey(req.user.id, providerId);
-    if (!apiKey) {
-        return res.status(403).json({ error: `未配置${providerConfig.name}的API密钥`, needApiKey: true, provider: providerId });
-    }
-
-    // 获取书籍内容（供 Agent 工具使用）
-    let bookContent = text || '';
-    let ctxBookId = bookId || null;
-    let ctxBookName = bookName || '';
-    if (bookId) {
-        const data = getBookContent(req.user.id, bookId);
-        if (data && data.supported) {
-            bookContent = data.content;
-            ctxBookName = ctxBookName || data.book.title;
-        }
-    }
-
-    const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
-    const contextLimit = conv.getModelContextLimit(model);
-    const systemPrompt = `你是一个专业的阅读助手 Agent，具备工具调用能力，可以自主决定调用工具来查阅书籍内容。当前书籍：《${ctxBookName}》。
-
-可用工具（仅用于检索书中信息）：
-- searchInBook：在全书检索相关段落（RAG）
-- getChapterInfo：获取指定章节内容
-- lookupCharacter：查找人物出场信息
-
-工作原则：
-1. 翻译、总结、解释、改写等任务直接回答，绝对不要调用工具
-2. 若问题可基于选中文本或你已有知识直接回答，直接回答（不必调用工具）
-3. 仅当需要查阅书中其他部分（如人物出场、其他章节内容、全书检索）时，才调用工具
-4. 调用工具后，结合工具返回结果组织最终答案
-5. 回答条理清晰，标注信息来源（选中文本/全书检索/章节内容）
-6. 避免冗余工具调用，能一次检索解决的不要多次检索
-7. 当用户询问模型信息，如实告知当前模型：${model}`;
-
-    const userMessage = text
-        ? `选中的文本：\n"${text}"\n\n问题：${question}`
-        : `问题：${question}${ctxBookName ? `\n（关于《${ctxBookName}》）` : ''}`;
-
-    // ==================== 会话上下文准备 ====================
-    const ctxLLM = { apiKey, providerConfig, model };
-    let conversation = conversationId ? conv.getConversation(req.user.id, conversationId) : null;
-    if (!conversation) {
-        conversation = conv.getOrCreateActiveConversation(req.user.id, ctxBookId, providerId, model);
-    }
-    conv.appendMessage(conversation.id, { role: 'user', content: userMessage });
-    conv.maybeSetTitle(conversation.id, question);
-
-    // 携带历史 + 长期记忆组装 messages（工具调用产生的中间消息不落盘，仅在本轮循环内使用）
-    const memoriesText = conv.formatMemoriesBlock(conv.retrieveMemories(req.user.id, question, 6));
-    const freshConv = conv.getConversation(req.user.id, conversation.id);
-    const messages = conv.buildModelMessages(freshConv, systemPrompt, { memoriesText });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-
-    res.write(`data: ${JSON.stringify({ type: 'session', conversationId: conversation.id, tokens: freshConv.token_estimate, limit: contextLimit })}\n\n`);
-
-    try {
-        const result = await runAgentLoop({
-            apiKey, providerConfig, model, providerId,
-            systemPrompt, userMessage, messages,
-            context: { bookId: ctxBookId, userId: req.user.id, content: bookContent },
-            onEvent: (event) => {
-                res.write(`data: ${JSON.stringify(event)}\n\n`);
-            }
-        });
-
-        // 落盘最终回答 + 后处理（压缩 / 记忆抽取）
-        if (result && result.content) {
-            conv.appendMessage(conversation.id, { role: 'assistant', content: result.content });
-            try {
-                const c2 = conv.getConversation(req.user.id, conversation.id);
-                const compressResult = await conv.maybeAutoCompress(ctxLLM, c2);
-                if (compressResult.compressed) {
-                    res.write(`data: ${JSON.stringify({ type: 'compressed', before: compressResult.before, after: compressResult.after, saved: Math.max(0, compressResult.before - compressResult.after), tokens: compressResult.after, limit: contextLimit, auto: true })}\n\n`);
-                }
-            } catch (e) { console.warn('自动压缩失败:', e.message); }
-            const recent = conv.getConversationMessages(conversation.id, { windowOnly: true }).slice(-6);
-            conv.extractAndStoreMemories(ctxLLM, req.user.id, conversation.id, recent)
-                .catch(e => console.warn('记忆抽取失败:', e.message));
-        }
-        const finalTokens = conv.getConversation(req.user.id, conversation.id).token_estimate;
-        res.write(`data: ${JSON.stringify({ type: 'session_update', tokens: finalTokens, limit: contextLimit })}\n\n`);
-        res.end();
-    } catch (error) {
-        console.error('Agent 流式错误:', error);
-        const isTimeout = error.name === 'AbortError' || error.name === 'TimeoutError';
-        const friendly = isTimeout ? 'AI 响应超时，请稍后重试' : error.message;
-        if (!res.headersSent) {
-            res.status(isTimeout ? 504 : 500).json({ error: `Agent 服务失败: ${friendly}` });
-        } else {
-            res.write(`data: ${JSON.stringify({ type: 'error', error: friendly })}\n\n`);
-            res.end();
-        }
-    }
-});
+// /api/agent/stream 已在 P1a 移除：问答统一到 /api/ask-stream（自动工具决策）
 
 // Multi-Agent 任务列表
 app.get('/api/agent/tasks', (req, res) => {
@@ -1253,7 +1127,7 @@ app.post('/api/agent/task', async (req, res) => {
         res.write(`data: ${JSON.stringify({ type: 'result', final: result.final, outputs: result.outputs })}\n\n`);
         res.end();
     } catch (error) {
-        console.error('Multi-Agent 任务错误:', error);
+        console.error('Multi-Agent 任务错误:', error.status || '', error.message);
         if (!res.headersSent) {
             res.status(500).json({ error: `任务执行失败: ${error.message}` });
         } else {

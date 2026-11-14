@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:online": "node scripts/run-baseline.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

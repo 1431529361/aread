@@ -1,0 +1,225 @@
+{
+  "runId": "fake-2026-11-14T09-02-54-417Z",
+  "mode": "fake",
+  "provider": "fakeprov",
+  "model": "fake-model",
+  "repeat": 1,
+  "startedAt": "2026-11-14T09:02:55.183Z",
+  "bookHashes": {
+    "one-hundred-years": "cd3ef3be0d5ee2c27d7e9aa11396d606310550b7b82348231c456c28bffae01e",
+    "confessions": "2a9f2b6bf3f4419a922577aa81450fc12b57922c3d80f78c8e76235fac12b0df"
+  },
+  "retrieval": {
+    "embedding+bm25": {
+      "answerable": 3,
+      "hitAt5": 1,
+      "evidenceRecallAt5": 1,
+      "mrrAt5": 0.7777777777777777,
+      "indexModes": {
+        "one-hundred-years": {
+          "success": true,
+          "mode": "embedding+bm25",
+          "chunkCount": 583
+        },
+        "confessions": {
+          "success": true,
+          "mode": "embedding+bm25",
+          "chunkCount": 1014
+        }
+      }
+    },
+    "bm25": {
+      "answerable": 3,
+      "hitAt5": 0.6666666666666666,
+      "evidenceRecallAt5": 0.6666666666666666,
+      "mrrAt5": 0.6666666666666666,
+      "indexModes": {
+        "one-hundred-years": {
+          "success": true,
+          "mode": "bm25",
+          "chunkCount": 583
+        },
+        "confessions": {
+          "success": true,
+          "mode": "bm25",
+          "chunkCount": 1014
+        }
+      }
+    }
+  },
+  "answers": {
+    "normal": {
+      "runs": 3,
+      "errors": 0,
+      "errorRate": 0,
+      "avgToolCalls": 0,
+      "firstChunkP50": 5,
+      "firstChunkP95": 21,
+      "totalP50": 56,
+      "totalP95": 69
+    },
+    "agent-hybrid": {
+      "runs": 3,
+      "errors": 0,
+      "errorRate": 0,
+      "avgToolCalls": 0,
+      "firstChunkP50": 131,
+      "firstChunkP95": 153,
+      "totalP50": 131,
+      "totalP95": 153
+    },
+    "agent-bm25": {
+      "runs": 3,
+      "errors": 0,
+      "errorRate": 0,
+      "avgToolCalls": 0,
+      "firstChunkP50": 182,
+      "firstChunkP95": 185,
+      "totalP50": 182,
+      "totalP95": 185
+    }
+  },
+  "memory": {
+    "mem-01": {
+      "scenario": "明确偏好",
+      "memoryCount": 0,
+      "checksPass": 0,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "memoryContains",
+          "kind": "preference",
+          "substring": "分点",
+          "pass": false
+        }
+      ]
+    },
+    "mem-02": {
+      "scenario": "同义重复",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "maxPreferenceCount",
+          "substring": "要点",
+          "max": 2,
+          "note": "理想应归并为1条；当前精确去重可能存2条，作为基线记录",
+          "pass": true,
+          "actual": 0
+        }
+      ]
+    },
+    "mem-03": {
+      "scenario": "偏好更正",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "noActiveMemory",
+          "substring": "长篇详细",
+          "note": "旧偏好应被替代；当前系统可能并存，作为基线记录",
+          "pass": true
+        }
+      ]
+    },
+    "mem-04": {
+      "scenario": "一次性要求",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "noStablePreference",
+          "substring": "法语",
+          "note": "一次性要求不应成为永久偏好；当前系统可能误存，作为基线记录",
+          "pass": true
+        }
+      ]
+    },
+    "mem-05": {
+      "scenario": "书籍引用污染",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "noUserMemory",
+          "substring": "起义",
+          "note": "书籍剧情不应成为用户事实；当前系统可能误抽，作为基线记录",
+          "pass": true
+        }
+      ]
+    },
+    "mem-06": {
+      "scenario": "助手推断",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "noUserMemory",
+          "substring": "喜欢哲学",
+          "note": "助手推断不应直接成为用户事实；当前系统可能误抽，作为基线记录",
+          "pass": true
+        }
+      ]
+    },
+    "mem-07": {
+      "scenario": "无关问题",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "noNewMemory",
+          "pass": true,
+          "actual": 0
+        }
+      ]
+    },
+    "mem-08": {
+      "scenario": "跨书作用域",
+      "memoryCount": 0,
+      "checksPass": 0,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "bookGoalIsolation",
+          "note": "需人工标注",
+          "pass": null
+        }
+      ]
+    },
+    "mem-09": {
+      "scenario": "删除生效",
+      "memoryCount": 0,
+      "checksPass": 1,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "memoryCount",
+          "equals": 0,
+          "pass": true,
+          "actual": 0
+        }
+      ]
+    },
+    "mem-10": {
+      "scenario": "新会话回忆",
+      "memoryCount": 0,
+      "checksPass": 0,
+      "checksTotal": 1,
+      "checks": [
+        {
+          "type": "memoryContains",
+          "kind": "fact",
+          "substring": "中文系",
+          "pass": false
+        }
+      ]
+    }
+  },
+  "finishedAt": "2026-11-14T09:03:17.951Z"
+}

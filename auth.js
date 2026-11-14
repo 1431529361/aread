@@ -4,12 +4,17 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
-const { getDB } = require('./database');
+const { getDB, getBooksDir } = require('./database');
 
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
-const BOOKS_DIR = path.join(__dirname, 'books');
-const DEFAULTS_DIR = path.join(BOOKS_DIR, '__defaults');
+const BOOKS_DIR = getBooksDir();
+// 默认书源：优先隔离数据根自带的 __defaults（测试可放人工书），
+// 否则只读复制仓库默认书，原件不受测试写操作影响
+const LOCAL_DEFAULTS_DIR = path.join(BOOKS_DIR, '__defaults');
+const DEFAULTS_DIR = fs.existsSync(LOCAL_DEFAULTS_DIR)
+    ? LOCAL_DEFAULTS_DIR
+    : path.join(__dirname, 'books', '__defaults');
 const DEFAULT_BOOKS = [
     { title: '百年孤独', filename: '百年孤独.txt', author: '加西亚·马尔克斯' }
 ];

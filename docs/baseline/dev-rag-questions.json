@@ -1,0 +1,161 @@
+{
+  "version": "p0-dev-1",
+  "frozen": false,
+  "note": "P0开发集（非正式保留集）。金标准为本地译本原文精确子串；人名以本地译本为准（百年孤独为高长荣译本：奥雷连诺/乌苏娜/布恩蒂亚/梅尔加德斯）。no-answer题goldQuotes为空，期望明确缺证而非虚构。needsEvidence/selectionSufficient/isLongTask为P1a分流标注。",
+  "books": {
+    "one-hundred-years": "books/__defaults/百年孤独.txt",
+    "confessions": "books/__defaults/忏悔录 作者：卢梭.txt"
+  },
+  "scoring": {
+    "hitAt5": "Top5召回片段中至少包含一条goldQuote（去空白归一后子串匹配）即命中；no-answer题不计入Hit分母",
+    "evidenceRecallAt5": "Top5覆盖的goldQuote数/该题goldQuote总数，逐题平均",
+    "answerCorrectness": "按expected要点人工评分（完全/部分/错误），P0仅记录答案，正确率待人工标注",
+    "noAnswer": "书中无答案时不虚构书内事实、明确缺证记为正确"
+  },
+  "questions": [
+    {
+      "id": "gg-01", "book": "one-hundred-years", "group": "fact",
+      "question": "小说开头，奥雷连诺上校站在行刑队面前时想起了什么？",
+      "goldQuotes": ["准会想起父亲带他去参观冰块的那个遥远的下午"],
+      "expected": "想起父亲带他去参观冰块的那个遥远的下午",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-02", "book": "one-hundred-years", "group": "fact",
+      "question": "马孔多最初有多少户人家？",
+      "goldQuotes": ["马孔多是个二十户人家的村庄"],
+      "expected": "二十户人家",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-03", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "吉卜赛人第一次来到马孔多时，向居民展示的最神奇的物品是什么？",
+      "goldQuotes": ["他们首先带来的是磁铁", "自称梅尔加德斯"],
+      "expected": "磁铁（由吉卜赛人梅尔加德斯展示）",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-04", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "失眠症蔓延、人们开始遗忘时，用了什么办法来记住事物的名称和用途？",
+      "goldQuotes": ["他给每样东西都贴上标签"],
+      "expected": "给每样东西贴上标签（签条写明名称用途）",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-05", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "奥雷连诺上校一生发动了多少次武装起义，结果如何？",
+      "goldQuotes": ["奥雷连诺上校发动了三十二次武装起义，三十二次都遭到了失败"],
+      "expected": "三十二次武装起义，全部失败",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-06", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "被称为“俏姑娘”的雷麦黛丝最终是怎样离开人间的？",
+      "goldQuotes": ["俏姑娘雷麦黛丝", "升天的神话"],
+      "expected": "升天（抓着床单飞升消失），家人以升天神话解释",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-07", "book": "one-hundred-years", "group": "coref",
+      "turns": ["奥雷连诺上校的父亲是谁？", "他晚年靠制作什么维持生计？"],
+      "question": "奥雷连诺上校的父亲是谁？",
+      "goldQuotes": ["霍·阿·布恩蒂亚", "直到年老都在马孔多作坊里制作小金鱼为生"],
+      "expected": "父亲是霍·阿·布恩蒂亚；上校晚年制作小金鱼为生",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-08", "book": "one-hundred-years", "group": "coref",
+      "turns": ["雷贝卡有什么特殊的癖好？", "她丈夫死后她过着怎样的生活？"],
+      "question": "雷贝卡有什么特殊的癖好？",
+      "goldQuotes": ["雷贝卡又开始吃土", "雷贝卡就闩上房门，与世隔绝了"],
+      "expected": "吃土（及石灰）；丈夫死后闩门与世隔绝",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-09", "book": "one-hundred-years", "group": "no-answer",
+      "question": "书中是否给出马孔多建村的具体公元年份？",
+      "goldQuotes": [],
+      "expected": "书中未给出具体公元年份，应说明证据不足，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gg-10", "book": "one-hundred-years", "group": "no-answer",
+      "question": "俏姑娘雷麦黛丝升天之后定居在哪座具体的城市？",
+      "goldQuotes": [],
+      "expected": "书中无此信息（升天消失），应明确缺证，不虚构城市名",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-01", "book": "confessions", "group": "fact",
+      "question": "卢梭哪一年出生在哪里？他的父母分别是谁？",
+      "goldQuotes": ["我于1712年生于日内瓦，父亲是公民伊萨克·卢梭，母亲是女公民苏珊·贝尔纳"],
+      "expected": "1712年生于日内瓦；父伊萨克·卢梭，母苏珊·贝尔纳",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-02", "book": "confessions", "group": "fact",
+      "question": "卢梭的母亲是因何去世的？",
+      "goldQuotes": ["母亲因生我而死"],
+      "expected": "因生卢梭而死",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-03", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭少年时去学手艺，他的师傅叫什么、性格怎样？",
+      "goldQuotes": ["我的师傅名叫迪柯曼先生，是一位脾气暴躁的年轻人"],
+      "expected": "雕刻匠师傅迪柯曼先生，脾气暴躁",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-04", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭怎样称呼瓦朗夫人？这个称呼反映了两人怎样的关系？",
+      "goldQuotes": ["我叫她“妈妈”"],
+      "expected": "称她“妈妈”，她称卢梭“孩子”，反映亲密如母子的关系",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-05", "book": "confessions", "group": "cross-chapter",
+      "question": "卢梭因哪部歌剧作品在巴黎成为时髦人物？",
+      "goldQuotes": ["《乡村占卜者》使我完全成了一个时髦人物了"],
+      "expected": "《乡村占卜者》",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-06", "book": "confessions", "group": "cross-chapter",
+      "question": "卢梭蛰居退隐庐期间与谁闹翻？他如何评价这段时期？",
+      "goldQuotes": ["我蛰居退隐庐，跟我的那些所谓的朋友闹得不可开交", "我所有一切其他不幸的根源"],
+      "expected": "与所谓的朋友闹翻；视为一生其他不幸的根源",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-07", "book": "confessions", "group": "coref",
+      "turns": ["卢梭的母亲出身于什么家庭？", "他对音乐的兴趣最早受谁影响？"],
+      "question": "卢梭的母亲出身于什么家庭？",
+      "goldQuotes": ["我母亲是贝尔纳牧师的女儿", "对音乐的爱好，或者说是激情，应归功于她"],
+      "expected": "母亲是贝尔纳牧师的女儿；音乐兴趣受姑姑影响",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-08", "book": "confessions", "group": "coref",
+      "turns": ["卢梭年轻时偷了什么东西？", "他把过错推给了谁？"],
+      "question": "卢梭年轻时偷了什么东西？",
+      "goldQuotes": ["可我偏偏看中了这条丝带，便偷拿走了", "说她把丝带送了我"],
+      "expected": "偷了一条丝带；嫁祸给女仆（说她把丝带送了自己）",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-09", "book": "confessions", "group": "no-answer",
+      "question": "书中是否记载卢梭出生当天日内瓦的具体气温？",
+      "goldQuotes": [],
+      "expected": "书中无此信息，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rs-10", "book": "confessions", "group": "no-answer",
+      "question": "书中是否统计了卢梭一生抄写乐谱的总页数？",
+      "goldQuotes": [],
+      "expected": "书中无总页数统计，应明确缺证，不虚构数字",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    }
+  ]
+}

@@ -10,6 +10,7 @@ const { getDB } = require('./database');
 
 const EMBED_DIMS = 1024;
 const ALIYUN_KEY_PROVIDER = 'aliyun-embed'; // api_keys 表中的 provider 标识
+const CUSTOM_EMBED_KEY_PROVIDER = 'custom-embed'; // 通用自定义 Embedding 端点的 Key 标识
 
 // 预置提供商（端点/模型固定，不允许用户改地址）
 const PRESET_PROVIDERS = {
@@ -26,7 +27,7 @@ const PRESET_PROVIDERS = {
     }
 };
 
-const VALID_CHOICES = ['auto', 'aliyun', 'zhipu', 'siliconflow', 'off'];
+const VALID_CHOICES = ['auto', 'aliyun', 'custom', 'zhipu', 'siliconflow', 'off'];
 
 let deps = { getApiKey: null };
 
@@ -65,10 +66,19 @@ function getEmbeddingSettings(userId) {
         aliyun.baseUrl = process.env.EMBED_BASE_URL;
         aliyun.model = aliyun.model || process.env.EMBED_MODEL_NAME || '';
     }
-    return { provider: VALID_CHOICES.includes(provider) ? provider : 'auto', aliyun };
+    let custom = { baseUrl: '', model: '' };
+    try {
+        const raw = getSetting(userId, 'embedding_custom');
+        if (raw) custom = { ...custom, ...JSON.parse(raw) };
+    } catch {}
+    if (!custom.baseUrl && process.env.CUSTOM_EMBED_BASE_URL) {
+        custom.baseUrl = process.env.CUSTOM_EMBED_BASE_URL;
+        custom.model = custom.model || process.env.CUSTOM_EMBED_MODEL || '';
+    }
+    return { provider: VALID_CHOICES.includes(provider) ? provider : 'auto', aliyun, custom };
 }
 
-function saveEmbeddingSettings(userId, { provider, aliyun }) {
+function saveEmbeddingSettings(userId, { provider, aliyun, custom }) {
     if (provider) {
         if (!VALID_CHOICES.includes(provider)) throw new Error(`无效的 embedding 提供商: ${provider}`);
         setSetting(userId, 'embedding_provider', provider);
@@ -77,6 +87,12 @@ function saveEmbeddingSettings(userId, { provider, aliyun }) {
         setSetting(userId, 'embedding_aliyun', JSON.stringify({
             baseUrl: String(aliyun.baseUrl || '').trim().replace(/\/+$/, ''),
             model: String(aliyun.model || '').trim()
+        }));
+    }
+    if (custom && (custom.baseUrl || custom.model)) {
+        setSetting(userId, 'embedding_custom', JSON.stringify({
+            baseUrl: String(custom.baseUrl || '').trim().replace(/\/+$/, ''),
+            model: String(custom.model || '').trim()
         }));
     }
 }
@@ -96,6 +112,28 @@ function buildAliyunEmbedder(userId, settings) {
     return {
         providerId: 'aliyun',
         providerName: '阿里云',
+        endpoint: baseUrl.replace(/\/+$/, '') + '/embeddings',
+        model,
+        dims: EMBED_DIMS,
+        apiKey,
+        extraBody: null
+    };
+}
+
+function getCustomKey(userId) {
+    const key = deps.getApiKey && deps.getApiKey(userId, CUSTOM_EMBED_KEY_PROVIDER);
+    return key || process.env.CUSTOM_EMBED_API_KEY || null;
+}
+
+// 通用自定义 Embedding 端点（OpenAI 兼容 /embeddings，维度固定 1024）
+function buildCustomEmbedder(userId, settings) {
+    const { baseUrl, model } = settings.custom;
+    if (!baseUrl || !model) return null;
+    const apiKey = getCustomKey(userId);
+    if (!apiKey) return null;
+    return {
+        providerId: 'custom',
+        providerName: '自定义端点',
         endpoint: baseUrl.replace(/\/+$/, '') + '/embeddings',
         model,
         dims: EMBED_DIMS,
@@ -129,15 +167,17 @@ function buildPresetEmbedder(userId, providerId) {
 function resolveEmbedder(userId, forProvider = null) {
     const settings = getEmbeddingSettings(userId);
     if (forProvider) {
-        return forProvider === 'aliyun'
-            ? buildAliyunEmbedder(userId, settings)
-            : buildPresetEmbedder(userId, forProvider);
+        if (forProvider === 'aliyun') return buildAliyunEmbedder(userId, settings);
+        if (forProvider === 'custom') return buildCustomEmbedder(userId, settings);
+        return buildPresetEmbedder(userId, forProvider);
     }
     if (settings.provider === 'off') return null;
     if (settings.provider === 'aliyun') return buildAliyunEmbedder(userId, settings);
+    if (settings.provider === 'custom') return buildCustomEmbedder(userId, settings);
     if (PRESET_PROVIDERS[settings.provider]) return buildPresetEmbedder(userId, settings.provider);
-    // auto：阿里云配置完整 → 智谱 → 硅基流动
+    // auto：阿里云 → 自定义端点 → 智谱 → 硅基流动
     return buildAliyunEmbedder(userId, settings)
+        || buildCustomEmbedder(userId, settings)
         || buildPresetEmbedder(userId, 'zhipu')
         || buildPresetEmbedder(userId, 'siliconflow');
 }
@@ -198,6 +238,7 @@ async function validateEmbedder(embedder) {
 module.exports = {
     EMBED_DIMS,
     ALIYUN_KEY_PROVIDER,
+    CUSTOM_EMBED_KEY_PROVIDER,
     PRESET_PROVIDERS,
     init,
     getEmbeddingSettings,

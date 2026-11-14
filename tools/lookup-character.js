@@ -1,6 +1,8 @@
 /**
- * 工具：lookupCharacter — 查找人物出场位置及上下文片段
+ * 工具：lookupCharacter — 查找人物出场片段（统一 ToolResult）
+ * returnedOccurrences 仅表示本次返回数，不冒充全书总次数；保留原文换行。
  */
+const TR = require('./tool-result');
 
 module.exports = {
     name: 'lookupCharacter',
@@ -15,22 +17,19 @@ module.exports = {
     async execute(args, ctx) {
         const charName = args.name || '';
         const content = ctx.content || '';
-        const contexts = [];
+        const candidates = [];
         let pos = 0;
         const MAX_HITS = 6;
-        while ((pos = content.indexOf(charName, pos)) !== -1 && contexts.length < MAX_HITS) {
+        while ((pos = content.indexOf(charName, pos)) !== -1 && candidates.length < MAX_HITS) {
             const start = Math.max(0, pos - 80);
             const end = Math.min(content.length, pos + charName.length + 120);
-            contexts.push({
-                position: pos,
-                snippet: content.substring(start, end).replace(/\n+/g, ' ')
-            });
+            candidates.push(TR.candidate({
+                bookId: ctx.bookId, chapter: null,
+                text: content.substring(start, end), method: 'character'
+            }));
             pos += charName.length;
         }
-        return {
-            name: charName,
-            occurrences: contexts.length,
-            samples: contexts
-        };
+        if (!candidates.length) return TR.empty({ name: charName, returnedOccurrences: 0 });
+        return TR.ok(candidates, { name: charName, returnedOccurrences: candidates.length });
     }
 };

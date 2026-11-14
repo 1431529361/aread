@@ -8,10 +8,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getDB, isVecAvailable } = require('./database');
+const { getDB, isVecAvailable, getRagIndexDir } = require('./database');
 const embedding = require('./embedding');
+const rerank = require('./rerank');
 
-const LEGACY_RAG_DIR = path.join(__dirname, 'rag_index'); // 旧 JSON 索引目录（仅用于删除清理）
+const LEGACY_RAG_DIR = getRagIndexDir(); // 旧 JSON 索引目录（仅用于删除清理，跟随数据根）
 const CHUNK_SIZE = 500;      // 每块最大字符数
 const CHUNK_OVERLAP = 100;   // 滑动窗口重叠字符数
 const EMBED_BATCH = 10;      // 批量 embed 大小（DashScope 兼容接口批量上限）
@@ -326,30 +327,78 @@ function rrfFuse(lists, topK) {
 }
 
 /**
- * 混合检索主入口：向量 + BM25 双路召回 → RRF 融合
- * query 向量化在内部按建库 meta 自动解析，调用方无需关心提供商
- * @returns {Array<{ text, chapter, score }>} Top-K 片段
+ * 混合检索主入口（带诊断）：向量 + BM25 双路召回 → RRF 融合 → 可选重排
+ * @returns {{ hits: Array, diagnostics: Object }}
+ *   diagnostics.paths 记录本次实际路径；重排失败保留 RRF 原序并记 warning
  */
-async function retrieveAsync(userId, bookId, query, topK = 5) {
+async function retrieveDetailed(userId, bookId, query, topK = 5, opts = {}) {
+    const t0 = Date.now();
+    const diagnostics = { paths: [], warnings: [], rerank: null, elapsedMs: 0 };
     const meta = getMeta(userId, bookId);
-    if (!meta || meta.chunk_count === 0) return [];
+    if (!meta || meta.chunk_count === 0) {
+        diagnostics.elapsedMs = Date.now() - t0;
+        return { hits: [], diagnostics };
+    }
 
     let vecHits = null;
     try {
         vecHits = await vectorRecall(userId, bookId, meta, query, RECALL_N);
+        if (vecHits) diagnostics.paths.push({ method: 'vector', status: 'ok' });
     } catch (e) {
         console.warn('向量检索失败，降级 BM25:', e.message);
+        diagnostics.paths.push({ method: 'vector', status: 'error', code: 'VECTOR_FAILED' });
+        diagnostics.warnings.push({ code: 'VECTOR_FAILED', message: e.message, retryable: true });
         vecHits = null;
     }
 
     let bm25Hits = [];
     try {
         bm25Hits = bm25Recall(userId, bookId, query, RECALL_N);
+        diagnostics.paths.push({ method: 'bm25', status: 'ok' });
     } catch (e) {
         console.warn('BM25 检索失败:', e.message);
+        diagnostics.paths.push({ method: 'bm25', status: 'error', code: 'BM25_FAILED' });
     }
 
-    return rrfFuse([vecHits, bm25Hits], topK);
+    const hasVec = !!(vecHits && vecHits.length);
+    const hasBm25 = bm25Hits.length > 0;
+    const baseMethod = hasVec && hasBm25 ? 'hybrid' : (hasVec ? 'vector' : 'bm25');
+
+    // 可选重排：对融合候选有限重排；opts.rerank=false 强制禁用（消融条件）
+    const reranker = opts.rerank === false ? null : (opts.reranker || rerank.resolveReranker(userId));
+    const fuseN = reranker ? Math.max(topK, reranker.topN) : topK;
+    const fused = rrfFuse([vecHits, bm25Hits], fuseN);
+
+    let hits;
+    if (reranker && fused.length > 1) {
+        try {
+            const ranked = await rerank.rerankDocuments(reranker, query, fused.map(h => h.text), { topN: topK, signal: opts.signal });
+            hits = ranked.map(r => ({ ...fused[r.index], score: r.score, method: baseMethod + '+rerank' }));
+            diagnostics.paths.push({ method: 'rerank', status: 'ok' });
+            diagnostics.rerank = { applied: true, model: reranker.model };
+        } catch (e) {
+            console.warn('重排失败，保留 RRF 原排序:', e.message);
+            diagnostics.paths.push({ method: 'rerank', status: 'error', code: 'RERANK_FAILED' });
+            diagnostics.warnings.push({ code: 'RERANK_FAILED', message: e.message, retryable: true });
+            diagnostics.rerank = { applied: false, error: e.message };
+            hits = fused.slice(0, topK).map(h => ({ ...h, method: baseMethod }));
+        }
+    } else {
+        hits = fused.slice(0, topK).map(h => ({ ...h, method: baseMethod }));
+    }
+
+    diagnostics.elapsedMs = Date.now() - t0;
+    return { hits, diagnostics };
+}
+
+/**
+ * 混合检索主入口：向量 + BM25 双路召回 → RRF 融合 → 可选重排
+ * query 向量化在内部按建库 meta 自动解析，调用方无需关心提供商
+ * @returns {Array<{ text, chapter, score, method }>} Top-K 片段
+ */
+async function retrieveAsync(userId, bookId, query, topK = 5, opts = {}) {
+    const { hits } = await retrieveDetailed(userId, bookId, query, topK, opts);
+    return hits;
 }
 
 /**
@@ -393,6 +442,7 @@ module.exports = {
     indexBook,
     retrieve,
     retrieveAsync,
+    retrieveDetailed,
     getIndexStatus,
     deleteIndex
 };

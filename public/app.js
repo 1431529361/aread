@@ -12,7 +12,6 @@ class AIReadingAssistant {
         this.currentBook = null;
         this.currentBookContent = null;
         this.isReading = false;
-        this.agentMode = false;
         this.toolbarsVisible = false;
         this.currentConversationId = null;
         this.currentContextTokens = 0;
@@ -208,7 +207,7 @@ class AIReadingAssistant {
             if (btn) this.handleQuickAction({ currentTarget: btn });
         });
 
-        this.askBtn.addEventListener('click', () => this.handleAskQuestion());
+        this.askBtn.addEventListener('click', () => { if (this._asking) this.stopGeneration(); else this.handleAskQuestion(); });
         this.questionInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleAskQuestion(); }
         });
@@ -217,11 +216,7 @@ class AIReadingAssistant {
         const clearCtxBtn = document.getElementById('clearSelectedTextBtn');
         if (clearCtxBtn) clearCtxBtn.addEventListener('click', () => this.clearComposerContext());
 
-        // Agent mode toggle
-        const agentToggle = document.getElementById('agentModeToggle');
-        if (agentToggle) agentToggle.addEventListener('change', (e) => {
-            this.agentMode = e.target.checked;
-        });
+        // 统一问答入口（P1a）：不再需要 Agent 模式开关，由服务端自动决策工具
 
         // Session controls
         const newConvBtn = document.getElementById('newConversationBtn');
@@ -908,7 +903,7 @@ class AIReadingAssistant {
             'expand': '请提供与这段文字相关的扩展知识'
         };
         await this.openAIPanel();
-        await this.askAI(actionMap[action] || action);
+        await this.askAI(actionMap[action] || action, action);
     }
 
     async handleAskQuestion() {
@@ -918,56 +913,109 @@ class AIReadingAssistant {
         await this.askAI(question);
     }
 
-    async askAI(question) {
-        if (this.agentMode) return this.askAgent(question);
+    async askAI(question, action = 'ask') {
         const quoted = this.selectedText || '';
+        const requestId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
         this.setAsking(true);
         this.appendUserMessage(question, quoted);
         this.clearComposerContext();
         this.questionInput.value = '';
         this.autoGrowInput();
         const msg = this.createAIMessage();
-        const answerEl = msg.answerEl;
+        const answerEl = msg.answerEl, traceEl = msg.traceEl, headerEl = msg.headerEl;
+        this._abortController = new AbortController();
+        this._currentRequestId = requestId;
+
+        let fullContent = '', pendingChunk = '', rafId = null, started = false, ended = false;
+        const flushChunk = () => {
+            if (!pendingChunk) return;
+            const text = pendingChunk; pendingChunk = '';
+            const parts = text.split('\n');
+            parts.forEach((part, i) => {
+                if (part) answerEl.appendChild(document.createTextNode(part));
+                if (i < parts.length - 1) answerEl.appendChild(document.createElement('br'));
+            });
+            this.scrollChatToBottom();
+        };
+
+        const handleEvt = (evt) => {
+            const d = evt.data || {};
+            switch (evt.type) {
+                case 'start':
+                    if (d.conversationId) this.currentConversationId = d.conversationId;
+                    headerEl.textContent = `${d.provider} · ${d.model}`;
+                    headerEl.classList.add('show');
+                    answerEl.innerHTML = ''; started = true;
+                    break;
+                case 'status':
+                    this.appendTraceItem(traceEl, 'status', `⏳ ${d.label || d.phase || ''}`);
+                    break;
+                case 'tool_call':
+                    this.appendTraceItem(traceEl, 'tool_call', `🔧 调用工具：${d.name}(${JSON.stringify(d.args)})`);
+                    break;
+                case 'tool_result': {
+                    const failed = d.status === 'error';
+                    const em = failed && d.error ? `：${d.error.message}` : '';
+                    this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${failed ? '❌' : '✅'} ${d.name}：${d.status} · 返回${d.returnedCount || 0}条${d.truncated ? '(已裁剪)' : ''}${em}（${d.elapsedMs || 0}ms）`);
+                    break;
+                }
+                case 'evidence':
+                    this.renderEvidence(traceEl, d.items || []);
+                    break;
+                case 'warning':
+                    this.appendTraceItem(traceEl, 'fallback', `⚠️ ${d.message || ''}`);
+                    break;
+                case 'task_progress':
+                    this.appendTraceItem(traceEl, 'status', `📋 任务进度 ${d.completedUnits || 0}/${d.totalUnits || 0}`);
+                    break;
+                case 'answer_start':
+                    answerEl.innerHTML = ''; started = true;
+                    if (d.answerKind === 'insufficient_evidence') this.appendTraceItem(traceEl, 'fallback', '⚠️ 证据不足，不凭印象作答');
+                    if (d.answerKind === 'task_result') this.appendTraceItem(traceEl, 'status', '📋 长任务结果（采样分析）');
+                    break;
+                case 'chunk':
+                    if (!started) { answerEl.innerHTML = ''; started = true; }
+                    fullContent += d.content || '';
+                    pendingChunk += d.content || '';
+                    if (!rafId) rafId = requestAnimationFrame(() => { rafId = null; flushChunk(); });
+                    break;
+                case 'end':
+                    ended = true;
+                    if (d.status !== 'completed') {
+                        const em = (d.error && d.error.message) || d.status;
+                        if (!fullContent) answerEl.innerHTML = `<p style="color:#ef4444;">${this.escapeHtml(em)}</p>`;
+                        this.appendTraceItem(traceEl, 'fallback', `⚠️ 状态：${d.status}`);
+                    }
+                    break;
+            }
+        };
 
         try {
             const response = await this.apiFetch('/api/ask-stream', {
                 method: 'POST',
+                signal: this._abortController.signal,
                 body: JSON.stringify({
-                    text: quoted, question, bookName: this.getCurrentBookName(),
+                    requestId, question, action,
+                    selection: quoted ? { text: quoted, locator: null } : null,
                     provider: this.currentProvider, model: this.currentModel,
                     bookId: this.currentBook ? this.currentBook.id : null,
                     conversationId: this.currentConversationId
                 })
             });
-
             if (!response.ok) {
-                const data = await response.json();
-                if (data.needApiKey) {
-                    const pi = this.providers.find(p => p.id === (data.provider || this.currentProvider));
-                    answerEl.innerHTML = `<p style="color:#ef4444;">需要配置 ${pi ? pi.name : 'AI'} 的 API 密钥</p>`;
+                const data = await response.json().catch(() => ({}));
+                const err = data.error || {};
+                if (response.status === 403 || err.code === 'UNAUTHENTICATED') {
+                    answerEl.innerHTML = '<p style="color:#ef4444;">需要配置 AI 服务的 API 密钥</p>';
                     this.checkApiKeyStatus();
                 } else {
-                    answerEl.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(data.error)}</p>`;
+                    answerEl.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(err.message || '请求失败')}</p>`;
                 }
                 return;
             }
-
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let buffer = '', fullContent = '', pendingChunk = '', rafId = null, started = false;
-
-            const flushChunk = () => {
-                if (!pendingChunk) return;
-                const text = pendingChunk;
-                pendingChunk = '';
-                const parts = text.split('\n');
-                parts.forEach((part, i) => {
-                    if (part) answerEl.appendChild(document.createTextNode(part));
-                    if (i < parts.length - 1) answerEl.appendChild(document.createElement('br'));
-                });
-                this.scrollChatToBottom();
-            };
-
+            let buffer = '';
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) { if (rafId) cancelAnimationFrame(rafId); flushChunk(); break; }
@@ -975,174 +1023,58 @@ class AIReadingAssistant {
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
                 for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const dataStr = line.slice(6);
-                    if (!dataStr.trim()) continue;
-                    try {
-                        const parsed = JSON.parse(dataStr);
-                        if (parsed.type === 'start') {
-                            if (parsed.conversationId) this.currentConversationId = parsed.conversationId;
-                            if (typeof parsed.tokens === 'number') this.updateSessionInfo(parsed.tokens, parsed.limit);
-                            msg.headerEl.textContent = `${parsed.provider} · ${parsed.model}`;
-                            msg.headerEl.classList.add('show');
-                            answerEl.innerHTML = '';
-                            started = true;
-                        } else if (parsed.type === 'chunk') {
-                            if (!started) { answerEl.innerHTML = ''; started = true; }
-                            fullContent += parsed.content;
-                            pendingChunk += parsed.content;
-                            if (!rafId) rafId = requestAnimationFrame(() => { rafId = null; flushChunk(); });
-                        } else if (parsed.type === 'compressed') {
-                            this.showToast(`已自动压缩上下文，节省约 ${parsed.saved || 0} tokens`);
-                            this.updateSessionInfo(parsed.tokens, parsed.limit);
-                        } else if (parsed.type === 'session_update') {
-                            this.updateSessionInfo(parsed.tokens, parsed.limit);
-                        } else if (parsed.type === 'end') {
-                            if (parsed.conversationId) this.currentConversationId = parsed.conversationId;
-                            this.saveToHistory(quoted, question, fullContent);
-                        } else if (parsed.type === 'error') {
-                            answerEl.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(parsed.error)}</p>`;
-                        }
-                    } catch {}
+                    if (!line.startsWith('data:')) continue;
+                    const s = line.slice(5).trim();
+                    if (!s) continue;
+                    try { handleEvt(JSON.parse(s)); } catch {}
                 }
             }
-        } catch {
-            answerEl.innerHTML = '<p style="color:#ef4444;">网络错误</p>';
+            buffer += decoder.decode();
+            for (const line of buffer.split('\n')) {
+                if (line.startsWith('data:')) { const s = line.slice(5).trim(); if (s) { try { handleEvt(JSON.parse(s)); } catch {} } }
+            }
+            if (!ended) {
+                this.appendTraceItem(traceEl, 'fallback', '⚠️ 连接中断，正在核对结果…');
+                try {
+                    const q = await this.apiFetch(`/api/ask-requests/${requestId}`);
+                    if (q.ok) {
+                        const qd = await q.json();
+                        if (qd.assistantMessage && qd.assistantMessage.content) {
+                            answerEl.innerHTML = '';
+                            answerEl.appendChild(document.createTextNode(qd.assistantMessage.content));
+                        }
+                        this.appendTraceItem(traceEl, 'fallback', `核对状态：${qd.status}`);
+                    }
+                } catch {}
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') this.appendTraceItem(traceEl, 'fallback', '⏹ 已停止生成');
+            else answerEl.innerHTML = '<p style="color:#ef4444;">网络错误</p>';
         } finally {
             this.setAsking(false);
+            this._abortController = null;
             this._chatLoadedConvId = this.currentConversationId;
             this.scrollChatToBottom();
         }
     }
 
     setAsking(loading) {
+        this._asking = loading;
         this.askBtn.classList.toggle('loading', loading);
-        this.askBtn.disabled = loading;
+        this.askBtn.disabled = false;
+        this.askBtn.title = loading ? '停止生成' : '发送';
         this.questionInput.disabled = loading;
     }
 
-
-    // ==================== Agent (Function Calling + RAG + Multi-Agent) ====================
-
-    async askAgent(question) {
-        const quoted = this.selectedText || '';
-        this.setAsking(true);
-        this.appendUserMessage(question, quoted);
-        this.clearComposerContext();
-        this.questionInput.value = '';
-        this.autoGrowInput();
-        const msg = this.createAIMessage();
-        const answerEl = msg.answerEl;
-        const traceEl = msg.traceEl;
-
-        try {
-            const response = await this.apiFetch('/api/agent/stream', {
-                method: 'POST',
-                body: JSON.stringify({
-                    text: quoted, question, bookName: this.getCurrentBookName(),
-                    provider: this.currentProvider, model: this.currentModel,
-                    bookId: this.currentBook ? this.currentBook.id : null,
-                    conversationId: this.currentConversationId
-                })
-            });
-
-            if (!response.ok) {
-                const data = await response.json();
-                if (data.needApiKey) {
-                    const pi = this.providers.find(p => p.id === (data.provider || this.currentProvider));
-                    answerEl.innerHTML = `<p style="color:#ef4444;">需要配置 ${pi ? pi.name : 'AI'} 的 API 密钥</p>`;
-                    this.checkApiKeyStatus();
-                } else {
-                    answerEl.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(data.error)}</p>`;
-                }
-                return;
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '', fullContent = '', pendingChunk = '', rafId = null, finalStarted = false;
-
-            const flushChunk = () => {
-                if (!pendingChunk) return;
-                const text = pendingChunk;
-                pendingChunk = '';
-                const parts = text.split('\n');
-                parts.forEach((part, i) => {
-                    if (part) answerEl.appendChild(document.createTextNode(part));
-                    if (i < parts.length - 1) answerEl.appendChild(document.createElement('br'));
-                });
-                this.scrollChatToBottom();
-            };
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) { if (rafId) cancelAnimationFrame(rafId); flushChunk(); break; }
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    try {
-                        const evt = JSON.parse(line.slice(6));
-                        if (evt.type === 'start') {
-                            msg.headerEl.textContent = `${evt.provider} · ${evt.model}`;
-                            msg.headerEl.classList.add('show');
-                            answerEl.innerHTML = '';
-                        } else if (evt.type === 'session') {
-                            if (evt.conversationId) this.currentConversationId = evt.conversationId;
-                            if (typeof evt.tokens === 'number') this.updateSessionInfo(evt.tokens, evt.limit);
-                        } else if (evt.type === 'thought') {
-                            this.appendTraceItem(traceEl, 'thought', `💭 思考：${evt.content}`, evt.iteration);
-                        } else if (evt.type === 'tool_call') {
-                            this.appendTraceItem(traceEl, 'tool_call', `🔧 调用工具：${evt.name}(${JSON.stringify(evt.args)})`, evt.iteration);
-                        } else if (evt.type === 'tool_result') {
-                            const failed = evt.result && evt.result.error;
-                            const icon = failed ? '❌' : '✅';
-                            let display;
-                            // 检索类结果（带 results 数组）：展示命中条数 + 每条章节与摘要，避免 JSON 截断造成"只返回一条"的误解
-                            if (!failed && evt.result && Array.isArray(evt.result.results)) {
-                                const lines = evt.result.results.map((r, i) =>
-                                    `　${i + 1}. [${r.chapter || '未知章节'}] ${(r.text || '').substring(0, 40)}…`
-                                ).join('\n');
-                                display = `命中 ${evt.result.results.length} 条（${evt.result.source}）\n${lines}`;
-                            } else {
-                                const rs = JSON.stringify(evt.result);
-                                display = rs.substring(0, 200) + (rs.length > 200 ? '...' : '');
-                            }
-                            this.appendTraceItem(traceEl, failed ? 'tool_error' : 'tool_result', `${icon} 结果：${display}（${evt.elapsed}ms）`, evt.iteration);
-                        } else if (evt.type === 'fallback') {
-                            this.appendTraceItem(traceEl, 'fallback', `⚠️ ${evt.reason}`);
-                        } else if (evt.type === 'final_start') {
-                            answerEl.innerHTML = '';
-                            finalStarted = true;
-                        } else if (evt.type === 'chunk') {
-                            if (!finalStarted) { answerEl.innerHTML = ''; finalStarted = true; }
-                            fullContent += evt.content;
-                            pendingChunk += evt.content;
-                            if (!rafId) rafId = requestAnimationFrame(() => { rafId = null; flushChunk(); });
-                        } else if (evt.type === 'compressed') {
-                            this.showToast(`已自动压缩上下文，节省约 ${evt.saved || 0} tokens`);
-                            this.updateSessionInfo(evt.tokens, evt.limit);
-                        } else if (evt.type === 'session_update') {
-                            this.updateSessionInfo(evt.tokens, evt.limit);
-                        } else if (evt.type === 'end') {
-                            if (evt.conversationId) this.currentConversationId = evt.conversationId;
-                            this.saveToHistory(quoted, question, fullContent);
-                        } else if (evt.type === 'error') {
-                            answerEl.innerHTML = `<p style="color:#ef4444;">错误: ${this.escapeHtml(evt.error)}</p>`;
-                        }
-                    } catch {}
-                }
-            }
-        } catch {
-            answerEl.innerHTML = '<p style="color:#ef4444;">网络错误</p>';
-        } finally {
-            this.setAsking(false);
-            this._chatLoadedConvId = this.currentConversationId;
-            this.scrollChatToBottom();
-        }
+    stopGeneration() {
+        if (this._abortController) this._abortController.abort();
     }
 
+    renderEvidence(traceEl, items) {
+        if (!items || !items.length) return;
+        const lines = items.map(e => `[${e.evidenceId}] ${e.chapter ? '(' + e.chapter + ') ' : ''}${(e.text || '').substring(0, 50)}…${e.verified ? '' : '（不可跳转）'}`).join('\n');
+        this.appendTraceItem(traceEl, 'tool_result', `📎 本轮证据 ${items.length} 条\n${lines}`);
+    }
     appendTraceItem(traceEl, cls, text, iteration) {
         if (!traceEl) return;
         traceEl.classList.add('show');
@@ -1272,14 +1204,19 @@ class AIReadingAssistant {
             listEl.innerHTML = '<p class="memory-empty">还没有记忆。多和 AI 聊聊，它会记住你的偏好与兴趣。</p>';
             return;
         }
-        const kindLabel = { preference: '偏好', fact: '事实', interest: '兴趣' };
-        listEl.innerHTML = memories.map(m => `
+        // kind 仅允许固定枚举映射样式与文案；未知/历史非法 kind 安全降级为“事实”，
+        // 不将模型返回的任意字符串拼入 class 或 HTML
+        const kindMeta = { preference: '偏好', fact: '事实', interest: '兴趣' };
+        listEl.innerHTML = memories.map(m => {
+            const safeKind = Object.prototype.hasOwnProperty.call(kindMeta, m.kind) ? m.kind : 'fact';
+            return `
             <div class="memory-item" data-id="${m.id}">
-                <span class="memory-kind memory-kind-${m.kind}">${kindLabel[m.kind] || m.kind}</span>
+                <span class="memory-kind memory-kind-${safeKind}">${kindMeta[safeKind]}</span>
                 <span class="memory-content">${this.escapeHtml(m.content)}</span>
                 <button class="memory-delete-btn" data-id="${m.id}" title="删除这条记忆">×</button>
             </div>
-        `).join('');
+        `;
+        }).join('');
         listEl.querySelectorAll('.memory-delete-btn').forEach(btn => {
             btn.addEventListener('click', () => this.deleteMemory(Number(btn.dataset.id)));
         });
@@ -1807,15 +1744,22 @@ class AIReadingAssistant {
         document.getElementById('embedProviderSelect').addEventListener('change', () => this.updateEmbedConfigVisibility());
         document.getElementById('saveEmbedSettingsBtn').addEventListener('click', () => this.saveEmbeddingSettings());
         document.getElementById('deleteEmbedKeyBtn').addEventListener('click', () => this.deleteEmbedAliyunKey());
+        document.getElementById('deleteCustomEmbedKeyBtn').addEventListener('click', () => this.deleteCustomEmbedKey());
+        // 重排序（Rerank）设置
+        document.getElementById('saveRerankSettingsBtn').addEventListener('click', () => this.saveRerankSettings());
+        document.getElementById('deleteRerankKeyBtn').addEventListener('click', () => this.deleteRerankKey());
+        document.getElementById('rerankEnabled').addEventListener('change', () => this.updateRerankConfigVisibility());
     }
 
     // ==================== Embedding (RAG) Settings ====================
 
     updateEmbedConfigVisibility() {
         const provider = document.getElementById('embedProviderSelect').value;
-        // auto 也可能用到阿里云，展示配置区便于填写
+        // auto 也可能用到阿里云/自定义，展示配置区便于填写
         document.getElementById('embedAliyunConfig').style.display =
             (provider === 'aliyun' || provider === 'auto') ? 'block' : 'none';
+        document.getElementById('embedCustomConfig').style.display =
+            (provider === 'custom' || provider === 'auto') ? 'block' : 'none';
     }
 
     async loadEmbeddingSettings() {
@@ -1830,6 +1774,11 @@ class AIReadingAssistant {
             const keyStatus = document.getElementById('embedAliyunKeyStatus');
             keyStatus.textContent = data.aliyun.hasKey ? `（已配置 ${data.aliyun.maskedKey || ''}，留空则不修改）` : '';
             document.getElementById('deleteEmbedKeyBtn').style.display = data.aliyun.maskedKey ? 'inline-flex' : 'none';
+            const custom = data.custom || {};
+            document.getElementById('embedCustomBaseUrl').value = custom.baseUrl || '';
+            document.getElementById('embedCustomModel').value = custom.model || '';
+            document.getElementById('embedCustomKeyStatus').textContent = custom.hasKey ? `（已配置 ${custom.maskedKey || ''}，留空则不修改）` : '';
+            document.getElementById('deleteCustomEmbedKeyBtn').style.display = custom.maskedKey ? 'inline-flex' : 'none';
             const hint = document.getElementById('embedActiveHint');
             if (!data.vectorAvailable) {
                 hint.textContent = '⚠️ 服务端向量扩展不可用，当前仅支持 BM25 检索';
@@ -1841,6 +1790,7 @@ class AIReadingAssistant {
                 hint.textContent = '⚠️ 暂无可用的向量化提供商（未配置密钥），建索引时将使用 BM25。';
             }
             this.updateEmbedConfigVisibility();
+            this.loadRerankSettings();
         } catch {}
     }
 
@@ -1850,19 +1800,28 @@ class AIReadingAssistant {
         const aliyunBaseUrl = document.getElementById('embedAliyunBaseUrl').value.trim();
         const aliyunModel = document.getElementById('embedAliyunModel').value.trim();
         const aliyunApiKey = document.getElementById('embedAliyunKey').value.trim();
+        const customBaseUrl = document.getElementById('embedCustomBaseUrl').value.trim();
+        const customModel = document.getElementById('embedCustomModel').value.trim();
+        const customApiKey = document.getElementById('embedCustomKey').value.trim();
         if (provider === 'aliyun' && (!aliyunBaseUrl || !aliyunModel)) {
             this.showToast('请填写阿里云接口地址和模型名称');
             return;
         }
+        if (provider === 'custom' && (!customBaseUrl || !customModel)) {
+            this.showToast('请填写自定义接口地址和模型名称');
+            return;
+        }
         btn.classList.add('loading'); btn.disabled = true;
         try {
-            const body = { provider, aliyunBaseUrl, aliyunModel };
+            const body = { provider, aliyunBaseUrl, aliyunModel, customBaseUrl, customModel };
             if (aliyunApiKey) body.aliyunApiKey = aliyunApiKey;
+            if (customApiKey) body.customApiKey = customApiKey;
             const res = await this.apiFetch('/api/embedding-settings', { method: 'PUT', body: JSON.stringify(body) });
             const data = await res.json();
             if (res.ok) {
                 this.showToast(data.active ? `设置已保存，当前生效：${data.active.providerName}` : '设置已保存（当前无可用向量化，将使用 BM25）');
                 document.getElementById('embedAliyunKey').value = '';
+                document.getElementById('embedCustomKey').value = '';
                 this.loadEmbeddingSettings();
             } else {
                 this.showToast(data.error || '保存失败');
@@ -1876,6 +1835,77 @@ class AIReadingAssistant {
             const res = await this.apiFetch('/api/embedding-settings/aliyun-key', { method: 'DELETE' });
             const data = await res.json();
             if (data.success) { this.showToast('密钥已删除'); this.loadEmbeddingSettings(); }
+            else this.showToast(data.error || '删除失败');
+        } catch { this.showToast('删除失败'); }
+    }
+
+    async deleteCustomEmbedKey() {
+        if (!confirm('确定删除自定义 Embedding 密钥吗？删除后相关书籍检索将降级为 BM25。')) return;
+        try {
+            const res = await this.apiFetch('/api/embedding-settings/custom-key', { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) { this.showToast('密钥已删除'); this.loadEmbeddingSettings(); }
+            else this.showToast(data.error || '删除失败');
+        } catch { this.showToast('删除失败'); }
+    }
+
+    // ==================== Rerank Settings ====================
+
+    updateRerankConfigVisibility() {
+        const enabled = document.getElementById('rerankEnabled').checked;
+        document.getElementById('rerankConfig').style.opacity = enabled ? '1' : '0.5';
+    }
+
+    async loadRerankSettings() {
+        try {
+            const res = await this.apiFetch('/api/rerank-settings');
+            if (!res.ok) return;
+            const data = await res.json();
+            document.getElementById('rerankEnabled').checked = !!data.enabled;
+            document.getElementById('rerankBaseUrl').value = data.baseUrl || '';
+            document.getElementById('rerankModel').value = data.model || '';
+            document.getElementById('rerankTopN').value = data.topN || 10;
+            document.getElementById('rerankKeyStatus').textContent = data.hasKey ? `（已配置 ${data.maskedKey || ''}，留空则不修改）` : '';
+            document.getElementById('deleteRerankKeyBtn').style.display = data.maskedKey ? 'inline-flex' : 'none';
+            const hint = document.getElementById('rerankActiveHint');
+            hint.textContent = data.active ? `✅ 当前生效：${data.active.model} · Top ${data.active.topN}` : (data.enabled ? '⚠️ 已启用但配置不完整（需地址/模型/密钥）' : '未启用');
+            this.updateRerankConfigVisibility();
+        } catch {}
+    }
+
+    async saveRerankSettings() {
+        const btn = document.getElementById('saveRerankSettingsBtn');
+        const enabled = document.getElementById('rerankEnabled').checked;
+        const baseUrl = document.getElementById('rerankBaseUrl').value.trim();
+        const model = document.getElementById('rerankModel').value.trim();
+        const topN = parseInt(document.getElementById('rerankTopN').value, 10) || 10;
+        const rerankApiKey = document.getElementById('rerankKey').value.trim();
+        if (enabled && (!baseUrl || !model)) {
+            this.showToast('启用重排需填写接口地址和模型名称');
+            return;
+        }
+        btn.classList.add('loading'); btn.disabled = true;
+        try {
+            const body = { enabled, baseUrl, model, topN };
+            if (rerankApiKey) body.rerankApiKey = rerankApiKey;
+            const res = await this.apiFetch('/api/rerank-settings', { method: 'PUT', body: JSON.stringify(body) });
+            const data = await res.json();
+            if (res.ok) {
+                this.showToast(data.active ? `重排设置已保存，当前生效：${data.active.model}` : '重排设置已保存');
+                document.getElementById('rerankKey').value = '';
+                this.loadRerankSettings();
+            } else {
+                this.showToast(data.error || '保存失败');
+            }
+        } catch { this.showToast('保存失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
+    }
+
+    async deleteRerankKey() {
+        if (!confirm('确定删除重排密钥吗？删除后重排将不可用。')) return;
+        try {
+            const res = await this.apiFetch('/api/rerank-settings/key', { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) { this.showToast('密钥已删除'); this.loadRerankSettings(); }
             else this.showToast(data.error || '删除失败');
         } catch { this.showToast('删除失败'); }
     }
@@ -1962,13 +1992,6 @@ class AIReadingAssistant {
     hideModal() { this.apiKeyModal.classList.remove('visible'); document.getElementById('modalApiKeyInput').value = ''; }
 
     // ==================== History ====================
-
-    async saveToHistory(selectedText, question, answer) {
-        const item = { id: Date.now(), text: (selectedText || '').substring(0, 100) + ((selectedText || '').length > 100 ? '...' : ''), question, answer, time: new Date().toLocaleString('zh-CN') };
-        this.history.unshift(item);
-        if (this.history.length > 50) this.history = this.history.slice(0, 50);
-        try { await this.apiFetch('/api/history', { method: 'POST', body: JSON.stringify({ text: selectedText, question, answer }) }); } catch {}
-    }
 
     async loadHistory() {
         this.historyList.innerHTML = '<p class="empty-history">加载中...</p>';

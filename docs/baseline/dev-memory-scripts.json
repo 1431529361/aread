@@ -1,0 +1,75 @@
+{
+  "version": "p0-dev-1",
+  "frozen": false,
+  "note": "P0记忆开发脚本（10段）。turns经统一问答入口发送；assertions为可机器检查的确定性约束，precision/偏好遵从等质量指标记录原始答案后人工标注。跨会话探针必须新建会话。书籍引用污染/助手推断样本用于检验来源约束（当前系统未实现来源分离，预期会暴露基线问题）。",
+  "books": {
+    "one-hundred-years": "books/__defaults/百年孤独.txt",
+    "confessions": "books/__defaults/忏悔录 作者：卢梭.txt"
+  },
+  "scripts": [
+    {
+      "id": "mem-01", "scenario": "明确偏好", "book": "one-hundred-years",
+      "turns": ["请记住：我喜欢分点、简洁的回答，遇到术语请先解释。"],
+      "assertions": [{"type": "memoryContains", "kind": "preference", "substring": "分点"}],
+      "probes": [{"newConversation": true, "question": "请解释什么是隐喻", "expect": "回答分点且先解释术语"}]
+    },
+    {
+      "id": "mem-02", "scenario": "同义重复", "book": "one-hundred-years",
+      "turns": ["我爱用要点列表来看回答。", "我希望回答尽量用条目呈现，不要大段文字。"],
+      "assertions": [{"type": "maxPreferenceCount", "substring": "要点", "max": 2, "note": "理想应归并为1条；当前精确去重可能存2条，作为基线记录"}],
+      "probes": []
+    },
+    {
+      "id": "mem-03", "scenario": "偏好更正", "book": "confessions",
+      "turns": ["我喜欢长篇详细的回答。", "更正一下：我现在更喜欢简短的回答，请改过来。"],
+      "assertions": [{"type": "noActiveMemory", "substring": "长篇详细", "note": "旧偏好应被替代；当前系统可能并存，作为基线记录"}],
+      "probes": [{"newConversation": true, "question": "卢梭为什么写《忏悔录》？", "expect": "简短回答，不再使用长篇详细偏好"}]
+    },
+    {
+      "id": "mem-04", "scenario": "一次性要求", "book": "one-hundred-years",
+      "turns": ["这次请只用法语回答我这个问题：你好吗？"],
+      "assertions": [{"type": "noStablePreference", "substring": "法语", "note": "一次性要求不应成为永久偏好；当前系统可能误存，作为基线记录"}],
+      "probes": [{"newConversation": true, "question": "马孔多在哪里？", "expect": "不应强制法语回答"}]
+    },
+    {
+      "id": "mem-05", "scenario": "书籍引用污染", "book": "one-hundred-years",
+      "turns": [{"text": "奥雷连诺上校发动了三十二次武装起义，三十二次都遭到了失败。", "question": "这句话是什么意思？"}],
+      "assertions": [{"type": "noUserMemory", "substring": "起义", "note": "书籍剧情不应成为用户事实；当前系统可能误抽，作为基线记录"}],
+      "probes": []
+    },
+    {
+      "id": "mem-06", "scenario": "助手推断", "book": "confessions",
+      "turns": ["卢梭和华伦夫人是什么关系？"],
+      "assistantSetup": "您似乎对哲学和人物关系很感兴趣，我猜您是个喜欢哲学的人。",
+      "assertions": [{"type": "noUserMemory", "substring": "喜欢哲学", "note": "助手推断不应直接成为用户事实；当前系统可能误抽，作为基线记录"}],
+      "probes": []
+    },
+    {
+      "id": "mem-07", "scenario": "无关问题", "book": "one-hundred-years",
+      "turns": ["今天天气怎么样？"],
+      "assertions": [{"type": "noNewMemory"}],
+      "probes": []
+    },
+    {
+      "id": "mem-08", "scenario": "跨书作用域", "book": "one-hundred-years",
+      "turns": ["我正在为《百年孤独》写一份读书报告，重点关注叙事结构。"],
+      "switchBook": "confessions",
+      "turns2": ["我在读《忏悔录》，想搞清楚卢梭的自我辩护逻辑。"],
+      "assertions": [{"type": "bookGoalIsolation", "note": "两本书的阅读目标不应互相覆盖；当前系统无书级作用域，作为基线记录"}],
+      "probes": []
+    },
+    {
+      "id": "mem-09", "scenario": "删除生效", "book": "one-hundred-years",
+      "turns": ["请记住我喜欢用表格对比人物。"],
+      "action": "deleteAllMemories",
+      "assertions": [{"type": "memoryCount", "equals": 0}],
+      "probes": [{"newConversation": true, "question": "对比一下奥雷连诺上校和他的父亲", "expect": "不再从长期记忆召回表格偏好"}]
+    },
+    {
+      "id": "mem-10", "scenario": "新会话回忆", "book": "confessions",
+      "turns": ["请记住：我是中文系学生，正在准备毕业论文。"],
+      "assertions": [{"type": "memoryContains", "kind": "fact", "substring": "中文系"}],
+      "probes": [{"newConversation": true, "question": "我该如何分析《忏悔录》的自传真实性？", "expect": "结合用户中文系/毕业论文背景给出适配建议"}]
+    }
+  ]
+}

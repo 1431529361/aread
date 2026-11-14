@@ -34,6 +34,13 @@ const RESERVED_TOKENS = 2500;    // 为本轮回答 + system 开销预留
 const KEEP_RECENT_MESSAGES = 6;  // 压缩时保留最近的原始消息条数（约 3 轮）
 const MAX_MEMORIES_PER_USER = 200;
 const MAX_MEMORY_PER_EXTRACT = 5;
+// 记忆类型固定枚举：模型返回的 kind 属不可信输入，非法值一律安全降级为 fact，
+// 禁止任意字符串进入前端样式类名/HTML 拼接
+const MEMORY_KINDS = new Set(['preference', 'fact', 'interest']);
+
+function sanitizeMemoryKind(kind) {
+    return MEMORY_KINDS.has(kind) ? kind : 'fact';
+}
 
 // ==================== token 估算 ====================
 
@@ -151,16 +158,45 @@ function appendMessage(convId, msg) {
     const toolCalls = msg.tool_calls ? JSON.stringify(msg.tool_calls) : null;
     const tokens = estimateTokens(msg.content) + (toolCalls ? estimateTokens(toolCalls) : 0);
     const ts = nowISO();
+    const metadata = msg.metadata ? JSON.stringify(msg.metadata) : null;
+    const status = msg.status || 'completed';
 
     const tx = db.transaction(() => {
-        db.prepare(`INSERT INTO messages (conversation_id, seq, role, content, tool_calls, tool_call_id, token_estimate, in_window, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`)
-            .run(convId, seq, msg.role, msg.content ?? null, toolCalls, msg.tool_call_id ?? null, tokens, ts);
+        const info = db.prepare(`INSERT INTO messages (conversation_id, seq, role, content, tool_calls, tool_call_id, token_estimate, in_window, created_at, request_id, status, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`)
+            .run(convId, seq, msg.role, msg.content ?? null, toolCalls, msg.tool_call_id ?? null, tokens, ts, msg.requestId || null, status, metadata);
         db.prepare('UPDATE conversations SET token_estimate = token_estimate + ?, updated_at = ? WHERE id = ?')
             .run(tokens, ts, convId);
+        return info.lastInsertRowid;
+    });
+    const id = tx();
+    return { id: Number(id), seq, tokens };
+}
+
+/** 更新消息正文/状态/metadata（用于待完成助手消息的最终提交） */
+function updateMessage(messageId, { content, status, metadata }) {
+    const db = getDB();
+    const cur = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+    if (!cur) return null;
+    const newContent = content !== undefined ? content : cur.content;
+    const newStatus = status !== undefined ? status : cur.status;
+    const newMetadata = metadata !== undefined ? (metadata ? JSON.stringify(metadata) : null) : cur.metadata;
+    const newTokens = estimateTokens(newContent);
+    const delta = newTokens - (cur.token_estimate || 0);
+    const tx = db.transaction(() => {
+        db.prepare('UPDATE messages SET content = ?, status = ?, metadata = ?, token_estimate = ? WHERE id = ?')
+            .run(newContent ?? null, newStatus, newMetadata, newTokens, messageId);
+        if (delta !== 0) {
+            db.prepare('UPDATE conversations SET token_estimate = MAX(0, token_estimate + ?), updated_at = ? WHERE id = ?')
+                .run(delta, nowISO(), cur.conversation_id);
+        }
     });
     tx();
-    return { seq, tokens };
+    return db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+}
+
+function getMessageById(messageId) {
+    return getDB().prepare('SELECT * FROM messages WHERE id = ?').get(messageId) || null;
 }
 
 /**
@@ -195,7 +231,8 @@ function buildModelMessages(conv, baseSystemPrompt, opts = {}) {
     }
 
     const msgs = [{ role: 'system', content: sys }];
-    const rows = db.prepare('SELECT role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? AND in_window = 1 ORDER BY seq ASC').all(conv.id);
+    // 只把完成轮次加入模型历史；失败/取消/中断/进行中的半截回答不进上下文（旧消息 status 默认 completed）
+    const rows = db.prepare("SELECT role, content, tool_calls, tool_call_id FROM messages WHERE conversation_id = ? AND in_window = 1 AND (status IS NULL OR status = 'completed') ORDER BY seq ASC").all(conv.id);
     for (const r of rows) {
         const m = { role: r.role };
         m.content = r.content ?? null;
@@ -299,7 +336,7 @@ function upsertMemory(userId, { kind, content, salience, sourceConv }) {
                     salience = MAX(user_memories.salience, excluded.salience),
                     kind = excluded.kind,
                     updated_at = excluded.updated_at`)
-        .run(userId, kind || 'fact', content, salience ?? 1.0, sourceConv || null, ts, ts);
+        .run(userId, sanitizeMemoryKind(kind), content, salience ?? 1.0, sourceConv || null, ts, ts);
 
     // 容量上限：超出则按 salience + updated_at 淘汰最旧
     const count = db.prepare('SELECT COUNT(*) c FROM user_memories WHERE user_id = ?').get(userId).c;
@@ -357,7 +394,7 @@ ${convoText}
         if (!content) continue;
         try {
             upsertMemory(userId, {
-                kind: it.kind, content,
+                kind: sanitizeMemoryKind(it.kind), content,
                 salience: typeof it.salience === 'number' ? Math.max(0.1, Math.min(1, it.salience)) : 0.8,
                 sourceConv: convId
             });
@@ -405,6 +442,8 @@ module.exports = {
     touchConversation,
     // 消息
     appendMessage,
+    updateMessage,
+    getMessageById,
     getConversationMessages,
     maybeSetTitle,
     buildModelMessages,

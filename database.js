@@ -3,7 +3,50 @@ const sqliteVec = require('sqlite-vec');
 const path = require('path');
 const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, 'data.db');
+const REPO_ROOT = __dirname;
+
+// 进程级数据根：默认业务路径不变；设置 READER_DATA_ROOT 后，
+// data.db / books / rag_index 全部跟随该根目录，供隔离测试使用。
+function normalizeForCompare(p) {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isInsidePath(child, parent) {
+    const c = normalizeForCompare(child);
+    const par = normalizeForCompare(parent);
+    return c === par || c.startsWith(par + path.sep);
+}
+
+function getDataRoot() {
+    const raw = process.env.READER_DATA_ROOT;
+    if (!raw || !raw.trim()) return REPO_ROOT;
+    const root = path.resolve(raw.trim());
+    // 安全护栏：数据根不得覆盖或落入业务数据目录，防止测试写操作触及真实数据
+    const protectedPaths = [
+        path.join(REPO_ROOT, 'books'),
+        path.join(REPO_ROOT, 'rag_index'),
+        path.join(REPO_ROOT, 'data.db')
+    ];
+    for (const p of protectedPaths) {
+        if (isInsidePath(p, root) || isInsidePath(root, p)) {
+            throw new Error(`READER_DATA_ROOT 与业务数据目录冲突，拒绝启动: ${root}（保护路径: ${p}）`);
+        }
+    }
+    return root;
+}
+
+function getDbPath() {
+    return path.join(getDataRoot(), 'data.db');
+}
+
+function getBooksDir() {
+    return path.join(getDataRoot(), 'books');
+}
+
+function getRagIndexDir() {
+    return path.join(getDataRoot(), 'rag_index');
+}
 
 let db = null;
 let vecAvailable = false; // sqlite-vec 扩展是否加载成功（失败时 RAG 自动降级为纯 BM25）
@@ -40,7 +83,9 @@ function createDbWrapper(sqliteDb) {
 }
 
 async function initDB() {
-    const sqliteDb = new Database(DB_PATH);
+    const dbPath = getDbPath();
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const sqliteDb = new Database(dbPath);
 
     // 加载 sqlite-vec 向量扩展（用于 RAG 向量检索）；加载失败不阻塞启动
     try {
@@ -219,7 +264,56 @@ async function initDB() {
         }
     }
 
+    applyMigrations(db);
+
     return db;
+}
+
+// ==================== _schema 迁移登记 ====================
+// 顺序迁移，单一登记机制；每个迁移幂等（记录已应用则跳过）。
+// 真实数据迁移须先在隔离副本验证并备份；此处只做加法，不删除用户数据。
+const MIGRATIONS = [
+    {
+        id: 'web_001_request_contract',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS requests (
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    request_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    conversation_id TEXT,
+                    user_message_id INTEGER,
+                    assistant_message_id INTEGER,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    error TEXT,
+                    post_processing TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (user_id, request_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_requests_conv ON requests(conversation_id);
+            `);
+            // messages 增列（旧消息 status 默认 completed、metadata 为 NULL，UI 标旧版）
+            const cols = db.prepare("PRAGMA table_info(messages)").all().map(c => c.name);
+            if (!cols.includes('request_id')) db.exec('ALTER TABLE messages ADD COLUMN request_id TEXT');
+            if (!cols.includes('status')) db.exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'completed'");
+            if (!cols.includes('metadata')) db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
+            db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_conv_seq_unique ON messages(conversation_id, seq)');
+        }
+    }
+];
+
+function applyMigrations(db) {
+    db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT DEFAULT (datetime(\'now\')))');
+    const applied = new Set(db.prepare('SELECT id FROM schema_migrations').all().map(r => r.id));
+    for (const m of MIGRATIONS) {
+        if (applied.has(m.id)) continue;
+        const tx = db.transaction(() => {
+            m.up(db);
+            db.prepare('INSERT INTO schema_migrations (id) VALUES (?)').run(m.id);
+        });
+        tx();
+    }
 }
 
 function getDB() {
@@ -231,4 +325,4 @@ function isVecAvailable() {
     return vecAvailable;
 }
 
-module.exports = { initDB, getDB, isVecAvailable };
+module.exports = { initDB, getDB, isVecAvailable, getDataRoot, getDbPath, getBooksDir, getRagIndexDir };
