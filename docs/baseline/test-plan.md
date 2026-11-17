@@ -1,6 +1,6 @@
 # P0 测试计划与验收映射
 
-日期：2026-11-14。关联：[P0方案](../web-thesis-p0-plan.md)、[总方案](../web-thesis-plan.md)。
+日期：2026-11-14。关联：[P0方案](../web-thesis/web-thesis-p0-plan.md)、[总方案](../web-thesis/web-thesis-plan.md)。
 
 ## 1. 离线确定性测试（无付费依赖，P0-02）
 

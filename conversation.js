@@ -414,7 +414,7 @@ async function maybeAutoCompress(ctx, conv) {
 }
 
 // ==================== 长期记忆（P2 治理：来源/作用域/状态/屏障） ====================
-// 领域规则见 docs/web-thesis-memory-plan.md §4-§8 与 SC §8。
+// 领域规则见 docs/web-thesis/web-thesis-memory-plan.md §4-§8 与 SC §8。
 // 模型调用全部在事务外；写事务短小，依赖部分唯一索引兜底并发。
 
 const MEMORY_KINDS = ['preference', 'fact', 'interest', 'reading_goal', 'open_question'];
