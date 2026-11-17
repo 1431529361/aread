@@ -64,10 +64,11 @@ function normalizeToolCalls(toolCalls) {
  */
 async function chat(ctx, {
     messages, tools = null, toolChoice = 'auto', temperature = 0.3,
-    maxTokens = 1500, timeoutMs = 60000, retries = 0, signal = null, deadlineAt = null
+    maxTokens = 1500, timeoutMs = 60000, retries = 0, signal = null, deadlineAt = null, enableThinking = null
 } = {}) {
     const { endpoint, model } = resolveTarget(ctx);
     const body = { model, messages, temperature, max_tokens: maxTokens };
+    if (enableThinking === false) body.enable_thinking = false;
     if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = toolChoice; }
 
     let lastErr;
@@ -106,9 +107,9 @@ async function chat(ctx, {
 }
 
 /** 便捷封装：单 prompt 或 messages → content 字符串 */
-async function complete(ctx, promptOrMessages, { maxTokens = 800, temperature = 0.3, timeoutMs = 60000, retries = 0, signal = null, deadlineAt = null } = {}) {
+async function complete(ctx, promptOrMessages, { maxTokens = 800, temperature = 0.3, timeoutMs = 60000, retries = 0, signal = null, deadlineAt = null, enableThinking = null } = {}) {
     const messages = typeof promptOrMessages === 'string' ? [{ role: 'user', content: promptOrMessages }] : promptOrMessages;
-    const res = await chat(ctx, { messages, maxTokens, temperature, timeoutMs, retries, signal, deadlineAt });
+    const res = await chat(ctx, { messages, maxTokens, temperature, timeoutMs, retries, signal, deadlineAt, enableThinking });
     return (res.content || '').trim();
 }
 
@@ -120,10 +121,11 @@ async function complete(ctx, promptOrMessages, { maxTokens = 800, temperature = 
  */
 async function stream(ctx, {
     messages, tools = null, toolChoice = 'auto', temperature = 0.4, maxTokens = 2000,
-    timeoutMs = 90000, onStart = null, onChunk = null, onReasoning = null, signal = null, deadlineAt = null
+    timeoutMs = 90000, onStart = null, onChunk = null, onReasoning = null, signal = null, deadlineAt = null, enableThinking = null
 } = {}) {
     const { endpoint, model } = resolveTarget(ctx);
     const body = { model, messages, temperature, max_tokens: maxTokens, stream: true };
+    if (enableThinking === false) body.enable_thinking = false;
     if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = toolChoice; }
 
     const controller = new AbortController();

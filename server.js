@@ -553,9 +553,14 @@ app.delete('/api/rerank-settings/key', (req, res) => {
 
 app.get('/api/providers', (req, res) => {
     const allProviders = getAllProviders(req.user.id);
+    const rawEndpoints = {};
+    for (const row of db.prepare('SELECT id, api_endpoint FROM custom_providers WHERE user_id = ?').all(req.user.id)) {
+        rawEndpoints[row.id] = row.api_endpoint;
+    }
     const providerList = Object.entries(allProviders).map(([key, value]) => ({
         id: key,
         name: value.name,
+        apiEndpoint: rawEndpoints[key] || value.apiEndpoint || null,
         defaultModel: value.defaultModel,
         models: value.models || null,
         isCustom: value.isCustom || false
@@ -819,8 +824,9 @@ app.delete('/api/books/:id', (req, res) => {
         db.prepare('DELETE FROM books_meta WHERE id = ? AND user_id = ?').run(bookId, req.user.id);
         // 书级记忆标 expired、该书在途来源作废（不召回、不自动改 user 范围）
         try { conv.onBookDeleted(req.user.id, bookId); } catch (e) { console.error('书级记忆清理异常:', e.message); }
-        // 一并清理该书的 AI 任务结果缓存与 RAG 索引
+        // 一并清理该书的 AI 任务结果缓存、章节摘要缓存与 RAG 索引
         db.prepare('DELETE FROM task_results WHERE book_id = ? AND user_id = ?').run(bookId, req.user.id);
+        db.prepare('DELETE FROM chapter_summaries WHERE book_id = ? AND user_id = ?').run(bookId, req.user.id);
         try { rag.deleteIndex(req.user.id, bookId); } catch (e) {}
         res.json({ success: true, message: '书籍已删除' });
     } catch (error) {
@@ -1127,6 +1133,25 @@ app.post('/api/agent/task', async (req, res) => {
 
     const model = clientModel || process.env.AI_MODEL || providerConfig.defaultModel;
 
+    // 章节摘要缓存：按 书+内容hash+模型+章序 复用，重新生成只重跑整合层
+    const summaryCache = {
+        get: (chapterIndex, hash) => {
+            const row = db.prepare('SELECT chapter_title, summary, quotes FROM chapter_summaries WHERE user_id = ? AND book_id = ? AND content_hash = ? AND model = ? AND chapter_index = ?')
+                .get(req.user.id, bookId, hash, model, chapterIndex);
+            if (!row) return null;
+            let quotes = [];
+            try { quotes = JSON.parse(row.quotes || '[]'); } catch {}
+            return { title: row.chapter_title, summary: row.summary, quotes };
+        },
+        set: (chapterIndex, hash, data) => {
+            db.prepare(`INSERT INTO chapter_summaries (user_id, book_id, content_hash, model, chapter_index, chapter_title, summary, quotes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, book_id, content_hash, model, chapter_index) DO UPDATE SET
+                    chapter_title = excluded.chapter_title, summary = excluded.summary, quotes = excluded.quotes`)
+                .run(req.user.id, bookId, hash, model, chapterIndex, data.title || '', data.summary, JSON.stringify(data.quotes || []));
+        }
+    };
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -1135,7 +1160,7 @@ app.post('/api/agent/task', async (req, res) => {
     try {
         const result = await runTask(taskType, {
             bookId, userId: req.user.id, content: data.content,
-            bookName: data.book.title, apiKey, providerConfig, model, providerId
+            bookName: data.book.title, apiKey, providerConfig, model, providerId, summaryCache
         }, (event) => {
             res.write(`data: ${JSON.stringify(event)}\n\n`);
         });

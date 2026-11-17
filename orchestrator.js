@@ -6,14 +6,23 @@
  * - 全程通过 onEvent 推送进度（node_start / node_progress / node_done / node_error / task_done）
  */
 
-const { splitChapters } = require('./text-utils');
+const { splitChapters, chunkContent, contentHash } = require('./text-utils');
 const llmClient = require('./llm-client');
 
 // ==================== 通用 LLM 调用 ====================
 
 // 统一走 llm-client，保留编排器默认参数（长超时 + 2 次退避重试）
-function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5, timeoutMs = 120000, retries = 2 } = {}) {
-    return llmClient.complete(ctx, prompt, { maxTokens, temperature, timeoutMs, retries });
+// 笔记属结构化生成任务，关闭思考（enable_thinking=false）：避免推理耗尽输出预算导致空/截断答案，且更快更省
+// 空答案仍计失败并重试一次（上游偶发异常兜底）
+async function llm(ctx, prompt, { maxTokens = 1200, temperature = 0.5, timeoutMs = 120000, retries = 2 } = {}) {
+    const budget = Math.max(maxTokens, 2000);
+    let lastErr;
+    for (let attempt = 0; attempt <= 1; attempt++) {
+        const content = await llmClient.complete(ctx, prompt, { maxTokens: budget, temperature, timeoutMs, retries, enableThinking: false });
+        if (content) return content;
+        lastErr = new Error('模型返回空答案（上游异常）');
+    }
+    throw lastErr;
 }
 
 // ==================== 并发控制 ====================
@@ -92,11 +101,66 @@ class Orchestrator {
 
 // ==================== 任务定义 ====================
 
-const MAX_SUMMARY_CHAPTERS = 8; // 限制摘要章节数，控制耗时与成本
+const CHAPTER_DIRECT_LIMIT = 15000; // 单章一次摘要的字数上限；超长章按块分层归纳
+const MAP_CHUNK_CONFIG = { targetSize: 6000, longThreshold: 9000, overlap: 300 };
+
+/** 解析章节摘要输出：【摘要】…【金句】"…"（每句一行）；金句后续须逐字校验 */
+function parseChapterNote(text) {
+    const s = String(text || '');
+    const sumMatch = s.match(/【摘要】([\s\S]*?)(?=【金句】|$)/);
+    const quoMatch = s.match(/【金句】([\s\S]*)$/);
+    const summary = (sumMatch ? sumMatch[1] : s).trim();
+    const quotes = [];
+    if (quoMatch) {
+        for (const line of quoMatch[1].split('\n')) {
+            const m = line.match(/[“"「](.+?)[”"」]/);
+            if (m && m[1].trim()) quotes.push(m[1].trim());
+        }
+    }
+    return { summary, quotes: quotes.slice(0, 2) };
+}
+
+function chapterPrompt(bookName, title, text, isPiece = false) {
+    return `你是资深读书笔记撰写者。请通读以下${isPiece ? '章节片段' : '章节'}全文，输出两部分：
+【摘要】用${isPiece ? '150' : '200'}字以内概括核心情节与要点。
+【金句】从原文中逐字摘录${isPiece ? '1' : '1-2'}句最有代表性的句子，每句一行、用引号包裹，不得改写或编造。
+
+书名：《${bookName}》
+章节：${title}
+全文：
+${text}`;
+}
+
+/** 单章摘要：短章一次生成；超长章分块摘要后归纳到章（分层 map-reduce） */
+async function summarizeChapter(ctx, ch) {
+    if (ch.text.length <= CHAPTER_DIRECT_LIMIT) {
+        const raw = await llm(ctx, chapterPrompt(ctx.bookName, ch.title, ch.text), { maxTokens: 1500, temperature: 0.3 });
+        const note = parseChapterNote(raw);
+        note.quotes = note.quotes.filter(q => ch.text.includes(q));
+        return note;
+    }
+    const chunks = chunkContent(ch.text, MAP_CHUNK_CONFIG);
+    const pieceNotes = await runWithConcurrency(chunks, 3, async (piece) => {
+        const raw = await llm(ctx, chapterPrompt(ctx.bookName, ch.title, piece.text, true), { maxTokens: 1200, temperature: 0.3 });
+        const n = parseChapterNote(raw);
+        n.quotes = n.quotes.filter(q => piece.text.includes(q));
+        return n;
+    });
+    const candidateQuotes = pieceNotes.flatMap(n => n.quotes);
+    const piecesText = pieceNotes.map((n, i) => `【片段${i + 1}】${n.summary}`).join('\n');
+    const raw = await llm(ctx, `以下是一本书中「${ch.title}」一章的分段摘要（该章较长，已按原文顺序分块）。请归纳为整章摘要。
+书名：《${ctx.bookName}》
+${piecesText}
+
+只输出：【摘要】用250字以内概括整章核心情节与要点，保持情节先后顺序。`, { maxTokens: 1500, temperature: 0.3 });
+    const note = parseChapterNote(raw);
+    note.quotes = candidateQuotes.slice(0, 2);
+    return note;
+}
 
 /**
- * 读书笔记任务 DAG:
- *   outline（大纲）→ summaries（逐章并行摘要）→ critique（点评）→ integrate（整合）
+ * 读书笔记任务 DAG（全书分层 map-reduce）:
+ *   outline（大纲）∥ summaries（全章节并行摘要，长章分层，按内容hash缓存）→ integrate（流式整合）
  */
 function buildGenerateNotesTask() {
     return {
@@ -108,7 +172,7 @@ function buildGenerateNotesTask() {
                 deps: [],
                 run: async (ctx, inputs, onProgress) => {
                     const chapters = splitChapters(ctx.content);
-                    const chapterList = chapters.slice(0, 20).map((c, i) => `${i + 1}. ${c.title}`).join('\n');
+                    const chapterList = chapters.slice(0, 30).map((c, i) => `${i + 1}. ${c.title}`).join('\n');
                     const preview = ctx.content.substring(0, 2500);
                     const prompt = `你是一位资深读书笔记撰写者。请基于以下书籍信息生成结构化大纲。
 
@@ -131,69 +195,50 @@ ${preview}
             {
                 id: 'summaries',
                 name: '摘要 Agent（并行）',
-                deps: ['outline'],
+                deps: [],
                 run: async (ctx, inputs, onProgress) => {
                     const chapters = splitChapters(ctx.content);
-                    const targets = chapters.slice(0, MAX_SUMMARY_CHAPTERS);
-                    onProgress({ stage: `并行摘要 ${targets.length} 章` });
+                    const total = chapters.length;
+                    const hash = contentHash(ctx.content);
+                    const cache = ctx.summaryCache || null;
+                    onProgress({ stage: `通读全书 ${total} 章` });
 
-                    // 受限并发生成各章摘要（每次最多 3 个请求，避免限流/超时）
-                    let doneCount = 0;
-                    const summaries = await runWithConcurrency(targets, 3, async (ch, i) => {
-                        const prompt = `请用150字以内总结以下章节的核心内容，提炼关键情节与要点：
-
-章节：${ch.title}
-内容：
-${ch.text.substring(0, 2000)}`;
+                    let doneCount = 0, cachedCount = 0;
+                    const summaries = await runWithConcurrency(chapters, 3, async (ch, i) => {
+                        // 缓存是优化而非依赖：读写异常一律按未命中处理，不阻塞生成
+                        let cached = null;
+                        try { cached = cache && cache.get(i, hash); } catch { cached = null; }
+                        if (cached && cached.summary) {
+                            cachedCount++; doneCount++;
+                            onProgress({ stage: `已完成 ${doneCount}/${total}（复用缓存 ${cachedCount} 章）`, done: doneCount, total });
+                            return { index: i + 1, title: ch.title, summary: cached.summary, quotes: cached.quotes || [] };
+                        }
                         try {
-                            const summary = await llm(ctx, prompt, { maxTokens: 400, temperature: 0.3 });
+                            const note = await summarizeChapter(ctx, ch);
                             doneCount++;
-                            onProgress({ stage: `已完成 ${doneCount}/${targets.length}`, done: doneCount, total: targets.length });
-                            return { index: i + 1, title: ch.title, summary };
+                            onProgress({ stage: `已完成 ${doneCount}/${total}`, done: doneCount, total });
+                            try { if (cache) cache.set(i, hash, { title: ch.title, summary: note.summary, quotes: note.quotes }); } catch {}
+                            return { index: i + 1, title: ch.title, ...note };
                         } catch (e) {
                             doneCount++;
-                            onProgress({ stage: `已完成 ${doneCount}/${targets.length}`, done: doneCount, total: targets.length });
-                            return { index: i + 1, title: ch.title, summary: '(摘要生成失败)', error: e.message };
+                            onProgress({ stage: `已完成 ${doneCount}/${total}`, done: doneCount, total });
+                            return { index: i + 1, title: ch.title, summary: '(摘要生成失败)', quotes: [], error: e.message };
                         }
                     });
-                    return { summaries, totalChapters: chapters.length, summarized: targets.length };
-                }
-            },
-            {
-                id: 'critique',
-                name: '点评 Agent',
-                deps: ['outline', 'summaries'],
-                run: async (ctx, inputs, onProgress) => {
-                    const outline = inputs.outline?.outline || '';
-                    const summaries = inputs.summaries?.summaries || [];
-                    const summaryText = summaries.map(s => `【${s.title}】${s.summary}`).join('\n');
-                    const prompt = `你是一位文学评论家。基于以下书籍大纲与章节摘要，撰写批判性点评。
-
-书名：《${ctx.bookName}》
-大纲：
-${outline}
-
-章节摘要：
-${summaryText}
-
-请输出：
-1. 作品价值与亮点（200字内）
-2. 不足或争议点（150字内）
-3. 适读人群建议（100字内）`;
-                    onProgress({ stage: '生成点评' });
-                    const critique = await llm(ctx, prompt, { maxTokens: 800 });
-                    return { critique };
+                    return { summaries, totalChapters: total, summarized: total, cachedCount };
                 }
             },
             {
                 id: 'integrate',
                 name: '整合 Agent',
-                deps: ['outline', 'summaries', 'critique'],
+                deps: ['outline', 'summaries'],
                 run: async (ctx, inputs, onProgress) => {
                     const outline = inputs.outline?.outline || '(大纲生成失败)';
                     const summaries = inputs.summaries?.summaries || [];
-                    const critique = inputs.critique?.critique || '(点评生成失败)';
-                    const summaryText = summaries.map(s => `### ${s.title}\n${s.summary}`).join('\n\n');
+                    const chapterText = summaries.map(s => {
+                        const quotes = (s.quotes || []).map(q => `> ${q}`).join('\n');
+                        return `### ${s.title}\n${s.summary}${quotes ? '\n' + quotes : ''}`;
+                    }).join('\n\n');
 
                     const prompt = `请将以下素材整合为一份完整、排版优美的读书笔记（Markdown 格式）。
 
@@ -202,20 +247,25 @@ ${summaryText}
 【书籍大纲】
 ${outline}
 
-【章节摘要】
-${summaryText}
-
-【批判性点评】
-${critique}
+【全书章节摘要与金句】
+${chapterText}
 
 要求：
 - 以 "# 《${ctx.bookName}》读书笔记" 为标题
-- 包含：书籍概览、结构大纲、章节摘要、深度点评、总结感悟
-- 摘要部分使用二级标题分章
+- 包含：书籍概览、结构大纲、逐章摘要（二级标题分章，每章保留1-2句原文金句，用 > 引用格式）、总结感悟
+- 金句必须逐字保留素材中的原文，不得改写
 - 末尾加一段100字的个人感悟
 - 整体语言精炼、有见地`;
                     onProgress({ stage: '整合输出' });
-                    const note = await llm(ctx, prompt, { maxTokens: 2000, temperature: 0.6, timeoutMs: 180000 });
+                    const res = await llmClient.stream(ctx, {
+                        messages: [{ role: 'user', content: prompt }],
+                        maxTokens: 8000, temperature: 0.6, timeoutMs: 240000, enableThinking: false,
+                        onChunk: (c) => onProgress({ chunk: c })
+                    });
+                    const note = (res.content || '').trim();
+                    if (!note) throw new Error('整合输出为空（上游异常）');
+                    if (res.finishReason === 'length') throw new Error('整合输出被截断（输出预算不足），请重试');
+                    if (res.interrupted) onProgress({ stage: '连接中断，已保留部分整合结果' });
                     return { note };
                 }
             }

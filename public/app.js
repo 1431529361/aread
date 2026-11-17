@@ -4,6 +4,7 @@ class AIReadingAssistant {
         this.history = [];
         this.currentFontSize = parseInt(localStorage.getItem('fontSize')) || 18;
         this.currentTheme = localStorage.getItem('theme') || 'light';
+        this.readerFont = localStorage.getItem('readerFont') || 'serif';
         this.apiProviders = {};
         this.currentProvider = localStorage.getItem('selectedProvider') || 'custom';
         this.currentModel = localStorage.getItem(`selectedModel_${this.currentProvider}`) || null;
@@ -129,12 +130,14 @@ class AIReadingAssistant {
         if (this.currentUser) {
             document.getElementById('displayUsername').textContent = this.currentUser.username;
             document.getElementById('userInfo').style.display = 'flex';
+            const sideAvatar = document.getElementById('sideAvatar');
+            if (sideAvatar) sideAvatar.textContent = this.currentUser.username.charAt(0).toUpperCase();
             const myUsername = document.getElementById('myUsername');
             if (myUsername) myUsername.textContent = this.currentUser.username;
             const myAvatar = document.getElementById('myAvatar');
             if (myAvatar) myAvatar.textContent = this.currentUser.username.charAt(0).toUpperCase();
         }
-        this.initEventListeners();
+        this.initEventListenersOnce();
         this.loadProviders();
         this.checkApiKeyStatus();
         this.loadHistory();
@@ -142,6 +145,13 @@ class AIReadingAssistant {
         // Apply saved font size
         document.getElementById('fontSizeDisplay').textContent = `${this.currentFontSize}px`;
         document.getElementById('readFontSizeDisplay').textContent = `${this.currentFontSize}px`;
+    }
+
+    // 退出后重新登录会再次进入 initApp：事件只绑定一次，避免重复触发
+    initEventListenersOnce() {
+        if (this._listenersBound) return;
+        this._listenersBound = true;
+        this.initEventListeners();
     }
 
     // ==================== API Fetch Wrapper ====================
@@ -168,23 +178,23 @@ class AIReadingAssistant {
         this.toast = document.getElementById('toast');
         this.historyList = document.getElementById('historyList');
         this.apiKeyModal = document.getElementById('apiKeyModal');
-        this.providerTabs = document.getElementById('providerTabs');
-        this.apiKeyLabel = document.getElementById('apiKeyLabel');
-        this.apiKeyHint = document.getElementById('apiKeyHint');
-        this.modelSelectGroup = document.getElementById('modelSelectGroup');
-        this.modelSelect = document.getElementById('modelSelect');
-        this.modelRow = document.getElementById('modelRow');
-        this.modelValue = document.getElementById('modelValue');
-        this.apiInfoList = document.getElementById('apiInfoList');
+        this.providerModal = document.getElementById('providerModal');
+        this.providerList = document.getElementById('providerList');
         this.agentTaskModal = document.getElementById('agentTaskModal');
     }
 
     // ==================== Event Listeners ====================
 
     initEventListeners() {
-        // Bottom navigation
-        document.querySelectorAll('.bottom-nav-item').forEach(btn => {
+        // 主导航（桌面侧边栏 + 窄窗口底部导航）
+        document.querySelectorAll('.bottom-nav-item, .side-nav-item').forEach(btn => {
             btn.addEventListener('click', (e) => this.switchView(e.currentTarget.dataset.view));
+        });
+
+        // 设置子页导航
+        document.getElementById('settingsNav').addEventListener('click', (e) => {
+            const btn = e.target.closest('.settings-nav-item');
+            if (btn) this.switchSettingsPage(btn.dataset.sp);
         });
 
         // History clear button (removed in conversation-history redesign; guarded)
@@ -240,6 +250,11 @@ class AIReadingAssistant {
         if (taskCloseBtn) taskCloseBtn.addEventListener('click', () => this.closeTaskModal());
         if (taskCancelBtn) taskCancelBtn.addEventListener('click', () => this.closeTaskModal());
 
+        // Notes modal：运行中关闭 = 转后台运行
+        document.getElementById('notesCloseBtn').addEventListener('click', () => this.closeNotesModal());
+        document.getElementById('notesFooterBtn').addEventListener('click', () => this.closeNotesModal());
+        document.getElementById('notesModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) this.closeNotesModal(); });
+
         // Reading view controls
         document.getElementById('exitReadingBtn').addEventListener('click', () => this.exitReading());
         document.getElementById('tocBtn').addEventListener('click', () => this.openTocDrawer());
@@ -260,6 +275,12 @@ class AIReadingAssistant {
             btn.addEventListener('click', (e) => this.changeTheme(e.currentTarget.dataset.theme));
         });
 
+        // 正文字体（衬线/无衬线）
+        document.querySelectorAll('.reader-font-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => this.setReaderFont(e.currentTarget.dataset.readerFont));
+        });
+        this.syncReaderFontButtons();
+
         // AI toggle
         document.getElementById('aiToggleBtn').addEventListener('click', () => this.toggleAIPanel());
         document.getElementById('aiFab').addEventListener('click', () => this.toggleAIPanel());
@@ -279,8 +300,8 @@ class AIReadingAssistant {
         // API key listeners
         this.initApiKeyListeners();
 
-        // Custom provider listeners
-        this.initCustomProviderListeners();
+        // Provider card & modal listeners
+        this.initProviderListeners();
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => this.handleKeyboardShortcuts(e));
@@ -293,7 +314,7 @@ class AIReadingAssistant {
         document.getElementById('historyView').classList.toggle('active', view === 'history');
         document.getElementById('settingsView').classList.toggle('active', view === 'settings');
 
-        document.querySelectorAll('.bottom-nav-item').forEach(btn => {
+        document.querySelectorAll('.bottom-nav-item, .side-nav-item').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.view === view);
         });
 
@@ -304,6 +325,18 @@ class AIReadingAssistant {
         }
         if (view === 'bookshelf') this.loadBooks();
         if (view === 'history') this.loadHistory();
+    }
+
+    switchSettingsPage(name) {
+        document.querySelectorAll('.settings-nav-item').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.sp === name);
+        });
+        document.querySelectorAll('.settings-page').forEach(page => {
+            page.classList.toggle('active', page.id === `sp-${name}`);
+        });
+        if (name === 'models') this.checkApiKeyStatus();
+        if (name === 'rag') this.loadEmbeddingSettings();
+        if (name === 'rerank') this.loadRerankSettings();
     }
 
     updateMyPage() {
@@ -318,19 +351,31 @@ class AIReadingAssistant {
     // ==================== Library / Bookshelf ====================
 
     initLibraryListeners() {
-        const uploadCard = document.getElementById('uploadCard');
         const bookFileInput = document.getElementById('bookFileInput');
         const uploadBookBtn = document.getElementById('uploadBookBtn');
+        const booksGrid = document.getElementById('booksGrid');
 
-        uploadCard.addEventListener('click', (e) => { if (e.target !== uploadBookBtn) bookFileInput.click(); });
-        uploadBookBtn.addEventListener('click', (e) => { e.stopPropagation(); bookFileInput.click(); });
+        uploadBookBtn.addEventListener('click', () => bookFileInput.click());
         bookFileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) this.uploadBook(e.target.files[0]); });
 
-        uploadCard.addEventListener('dragover', (e) => { e.preventDefault(); uploadCard.style.borderColor = 'var(--primary)'; });
-        uploadCard.addEventListener('dragleave', (e) => { e.preventDefault(); uploadCard.style.borderColor = ''; });
-        uploadCard.addEventListener('drop', (e) => {
+        // 上传卡片在网格内动态渲染，用事件委托
+        booksGrid.addEventListener('click', (e) => {
+            if (e.target.closest('.upload-card')) bookFileInput.click();
+        });
+        booksGrid.addEventListener('dragover', (e) => {
+            if (!e.target.closest('.upload-card')) return;
             e.preventDefault();
-            uploadCard.style.borderColor = '';
+            e.target.closest('.upload-card').classList.add('dragover');
+        });
+        booksGrid.addEventListener('dragleave', (e) => {
+            const card = e.target.closest('.upload-card');
+            if (card && !card.contains(e.relatedTarget)) card.classList.remove('dragover');
+        });
+        booksGrid.addEventListener('drop', (e) => {
+            const card = e.target.closest('.upload-card');
+            if (!card) return;
+            e.preventDefault();
+            card.classList.remove('dragover');
             if (e.dataTransfer.files.length > 0) this.uploadBook(e.dataTransfer.files[0]);
         });
     }
@@ -390,31 +435,47 @@ class AIReadingAssistant {
     renderBooks() {
         const booksGrid = document.getElementById('booksGrid');
         const libraryStats = document.getElementById('libraryStats');
-        libraryStats.innerHTML = `<span>共 <strong>${this.books.length}</strong> 本书</span>`;
+        libraryStats.innerHTML = `共 <strong>${this.books.length}</strong> 本书`;
+
+        const uploadTile = `
+            <div class="upload-card" id="uploadCard" role="button" tabindex="0" title="上传新书籍">
+                <svg class="upload-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span class="upload-card-title">上传新书籍</span>
+                <span class="upload-card-hint">TXT / PDF / EPUB / MOBI<br>点击选择或拖入文件</span>
+            </div>`;
 
         if (this.books.length === 0) {
-            booksGrid.innerHTML = `<div class="empty-library"><svg class="empty-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><p>书架空空如也</p><p class="empty-hint">上传你的第一本书开始阅读吧</p></div>`;
+            booksGrid.innerHTML = uploadTile + `<div class="empty-library"><svg class="empty-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><p>书架空空如也</p><p class="empty-hint">上传你的第一本书开始阅读吧</p></div>`;
             return;
         }
 
-        const colors = ['#4f46e5','#7c3aed','#2563eb','#0891b2','#059669','#d97706','#dc2626','#be185d'];
-        booksGrid.innerHTML = this.books.map((book, i) => {
+        const covers = ['#1e5b45', '#c2401f', '#3b4a6b', '#b45309', '#2a7d7b', '#7d3a5c', '#6b7a2a', '#4a5568'];
+        const hashOf = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
+
+        booksGrid.innerHTML = uploadTile + this.books.map((book, i) => {
             const progress = book.readProgress || book.read_progress || 0;
-            const color = colors[i % colors.length];
+            const color = covers[hashOf(book.title || book.id) % covers.length];
+            const pct = Math.round(progress * 100);
+            const isTxt = book.format.toLowerCase() === 'txt';
+            const notesRunning = this._notesRunningFor === book.id;
             return `
-                <div class="book-card" data-book-id="${book.id}">
-                    <div class="book-cover" style="background:linear-gradient(135deg,${color},${color}dd)">
-                        <svg class="book-cover-icon" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-                        <span class="book-format-badge">${book.format}</span>
+                <div class="book-card" data-book-id="${this.escapeHtml(book.id)}" style="--i:${Math.min(i, 12)}">
+                    <div class="book-cover" style="--cover:${color}">
+                        <span class="cover-format">${this.escapeHtml(book.format)}</span>
+                        <span class="cover-title">${this.escapeHtml(book.title)}</span>
+                        <span class="cover-seal">读</span>
+                        ${pct > 0 ? `<span class="cover-progress"><i style="width:${pct}%"></i></span>` : ''}
+                        <div class="book-hover">
+                            <button class="book-action-btn read-btn">开始阅读</button>
+                            <div class="book-hover-row">
+                                ${isTxt ? `<button class="book-action-btn index-btn">AI索引</button><button class="book-action-btn notes-btn${notesRunning ? ' is-running' : ''}">${notesRunning ? '生成中…' : '笔记'}</button>` : ''}
+                                <button class="book-action-btn delete-btn">删除</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="book-info">
+                    <div class="book-meta">
                         <div class="book-title" title="${this.escapeHtml(book.title)}">${this.escapeHtml(book.title)}</div>
-                        <div class="book-progress">${progress > 0 ? `已读 ${Math.round(progress * 100)}%` : '未读'}</div>
-                    </div>
-                    <div class="book-actions-row">
-                        <button class="book-action-btn read-btn">阅读</button>
-                        ${book.format.toLowerCase() === 'txt' ? '<button class="book-action-btn index-btn">AI索引</button><button class="book-action-btn notes-btn">读书笔记</button>' : ''}
-                        <button class="book-action-btn delete-btn">删除</button>
+                        <div class="book-progress">${pct > 0 ? `已读 ${pct}%` : '未读'}</div>
                     </div>
                 </div>`;
         }).join('');
@@ -426,7 +487,7 @@ class AIReadingAssistant {
             const indexBtn = card.querySelector('.index-btn');
             if (indexBtn) indexBtn.addEventListener('click', (e) => { e.stopPropagation(); this.indexBook(bookId); });
             const notesBtn = card.querySelector('.notes-btn');
-            if (notesBtn) notesBtn.addEventListener('click', (e) => { e.stopPropagation(); this.runAgentTask('generate-notes', bookId); });
+            if (notesBtn) notesBtn.addEventListener('click', (e) => { e.stopPropagation(); this.openNotesModal(bookId); });
             card.addEventListener('click', () => this.openBook(bookId));
         });
     }
@@ -484,21 +545,23 @@ class AIReadingAssistant {
         const article = document.getElementById('readingArticle');
         this.renderReadingContent(article, content, chapters);
         article.style.fontSize = `${this.currentFontSize}px`;
+        article.classList.toggle('reader-sans', this.readerFont === 'sans');
 
         // Update TOC
         this.updateReadingTOC();
 
-        // Show reading view, hide bottom nav
+        // Show reading view, hide app chrome
         document.getElementById('readingView').classList.add('active');
+        document.body.classList.add('reading-active');
         document.getElementById('bottomNav').classList.add('hidden');
         document.getElementById('appHeader').style.display = 'none';
 
-        // Hide toolbars initially
-        this.hideToolbars();
-        this.toolbarsVisible = false;
-
-        // Hide AI FAB initially
-        document.getElementById('aiFab').classList.remove('hidden');
+        // 桌面端默认展示工具栏；窄窗口点击正文唤出
+        const desktop = window.matchMedia('(min-width: 1024px)').matches;
+        this.toolbarsVisible = desktop;
+        document.getElementById('readingToolbarTop').classList.toggle('hidden', !desktop);
+        document.getElementById('readingToolbarBottom').classList.toggle('hidden', !desktop);
+        document.getElementById('aiFab').classList.toggle('hidden', desktop);
 
         // Restore scroll position
         const scrollKey = `scroll_${book.id}`;
@@ -527,6 +590,8 @@ class AIReadingAssistant {
 
         // Hide reading view, show nav
         document.getElementById('readingView').classList.remove('active');
+        document.getElementById('readingView').classList.remove('chat-open');
+        document.body.classList.remove('reading-active');
         document.getElementById('bottomNav').classList.remove('hidden');
         document.getElementById('appHeader').style.display = '';
 
@@ -741,6 +806,21 @@ class AIReadingAssistant {
         document.querySelectorAll('.theme-card').forEach(btn => btn.classList.toggle('active', btn.dataset.theme === theme));
     }
 
+    setReaderFont(font) {
+        if (!font) return;
+        this.readerFont = font;
+        localStorage.setItem('readerFont', font);
+        const article = document.getElementById('readingArticle');
+        if (article) article.classList.toggle('reader-sans', font === 'sans');
+        this.syncReaderFontButtons();
+    }
+
+    syncReaderFontButtons() {
+        document.querySelectorAll('.reader-font-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.readerFont === this.readerFont);
+        });
+    }
+
     // ==================== AI Panel ====================
 
     toggleAIPanel() {
@@ -751,12 +831,14 @@ class AIReadingAssistant {
 
     closeAIPanel() {
         document.getElementById('aiChatView').classList.remove('open');
-        document.getElementById('aiFab').classList.remove('hidden');
+        document.getElementById('readingView').classList.remove('chat-open');
+        document.getElementById('aiFab').classList.toggle('hidden', this.toolbarsVisible);
     }
 
     async openAIPanel() {
         const view = document.getElementById('aiChatView');
         view.classList.add('open');
+        document.getElementById('readingView').classList.add('chat-open');
         document.getElementById('aiFab').classList.add('hidden');
         // Sync book name into header
         const titleMain = view.querySelector('.chat-title-main');
@@ -1349,8 +1431,8 @@ class AIReadingAssistant {
             this._restoreHighlight();
             const marks = this._highlightRange(loc.start, loc.end);
             if (!marks.length) { this.showToast('未能定位到原文片段'); return; }
-            // 全屏对话盖住阅读器时先收起，否则高亮与滚动不可见
-            if (document.getElementById('aiChatView').classList.contains('open')) this.closeAIPanel();
+            // 窄窗口全屏对话盖住阅读器时先收起；桌面停靠面板保持打开
+            if (window.innerWidth < 1024 && document.getElementById('aiChatView').classList.contains('open')) this.closeAIPanel();
             marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
             this._showReturnChatBtn();
         } catch { this.showToast('跳转失败'); }
@@ -1488,7 +1570,7 @@ class AIReadingAssistant {
     async compressContext() {
         if (!this.currentConversationId) { this.showToast('当前还没有对话可压缩'); return; }
         const btn = document.getElementById('compressBtn');
-        if (btn) { btn.disabled = true; btn.textContent = '🗜️ 压缩中...'; }
+        if (btn) btn.disabled = true;
         try {
             const response = await this.apiFetch(`/api/conversations/${this.currentConversationId}/compress`, {
                 method: 'POST',
@@ -1505,7 +1587,7 @@ class AIReadingAssistant {
                 this.showToast(data.error || '压缩失败');
             }
         } catch { this.showToast('压缩失败'); }
-        finally { if (btn) { btn.disabled = false; btn.textContent = '🗜️ 压缩'; } }
+        finally { if (btn) btn.disabled = false; }
     }
 
     // ==================== Memory Management (P2 治理 UI) ====================
@@ -2025,10 +2107,131 @@ class AIReadingAssistant {
         } catch { this.showToast('删除失败'); }
     }
 
-    async runAgentTask(taskType, bookId, force = false) {
+    // ==================== 任务视图（索引弹窗 / 笔记弹窗共用渲染） ====================
+
+    agentTaskView() {
+        return {
+            kind: 'agent',
+            modal: this.agentTaskModal,
+            title: document.getElementById('agentTaskTitle'),
+            progress: document.getElementById('taskProgress'),
+            fill: document.getElementById('taskProgressFill'),
+            text: document.getElementById('taskProgressText'),
+            log: document.getElementById('taskLog'),
+            result: document.getElementById('taskResult'),
+            actions: document.getElementById('taskActionBar')
+        };
+    }
+
+    notesView() {
+        return {
+            kind: 'notes',
+            modal: document.getElementById('notesModal'),
+            title: document.getElementById('notesTitle'),
+            progress: document.getElementById('notesProgress'),
+            fill: document.getElementById('notesProgressFill'),
+            text: document.getElementById('notesProgressText'),
+            log: document.getElementById('notesLog'),
+            result: document.getElementById('notesResult'),
+            actions: document.getElementById('notesActionBar')
+        };
+    }
+
+    // ==================== 读书笔记（先查看，再手动生成） ====================
+
+    async openNotesModal(bookId) {
+        const view = this.notesView();
+        const book = this.books.find(b => b.id === bookId);
+        const title = `读书笔记 · ${book ? book.title : ''}`;
+        view.title.textContent = title;
+        view.modal.classList.add('visible');
+
+        // 该书任务仍在后台运行：直接展示实时进度，不重复发起
+        if (this._notesRunningFor === bookId) {
+            this.setTaskActions([{ label: '后台运行', onClick: () => this.backgroundNotesTask(view) }], view);
+            return;
+        }
+
+        this.openTaskModal(title, view);
+        this.setTaskProgress(0, '正在检查已保存的笔记...', view);
+        try {
+            const res = await this.apiFetch(`/api/agent/task/result?bookId=${encodeURIComponent(bookId)}&taskType=generate-notes`);
+            const data = await res.json();
+            if (data.result && data.result.content) {
+                this.showSavedTaskResult('generate-notes', bookId, data.result.content, data.result.updatedAt, view);
+            } else {
+                const outcome = this._notesOutcomes && this._notesOutcomes[bookId];
+                if (outcome && outcome.status === 'failed') this.showNotesFailed(bookId, view, outcome);
+                else this.showNotesEmpty(bookId, view);
+            }
+        } catch {
+            this.showNotesEmpty(bookId, view);
+        }
+    }
+
+    // 后台任务失败留痕：重开面板如实展示原因与重试入口，而不是回到"从未生成"的空状态
+    showNotesFailed(bookId, view, outcome) {
+        view.progress.style.display = 'none';
+        view.log.innerHTML = '';
+        view.log.style.display = 'none';
+        view.result.style.display = 'block';
+        const time = outcome.at ? new Date(outcome.at).toLocaleString('zh-CN') : '';
+        view.result.innerHTML = `
+            <div class="notes-empty notes-failed">
+                <span class="notes-failed-icon" aria-hidden="true">!</span>
+                <p class="notes-empty-title">上次生成未完成</p>
+                <p class="notes-empty-desc">${this.escapeHtml(outcome.message || '任务失败')}</p>
+                <p class="notes-empty-cost">${time ? `发生于 ${time}。` : ''}失败不会保存残缺笔记，可直接重试；若多次失败，请在「设置 → 模型服务」测试连接或更换模型。</p>
+            </div>`;
+        this.setTaskActions([
+            { label: '🔄 重新生成', primary: true, onClick: () => this.runAgentTask('generate-notes', bookId, true, view) }
+        ], view);
+    }
+
+    showNotesEmpty(bookId, view) {
+        const book = this.books.find(b => b.id === bookId);
+        view.progress.style.display = 'none';
+        view.log.innerHTML = '';
+        view.log.style.display = 'none';
+        view.result.style.display = 'block';
+        view.result.innerHTML = `
+            <div class="notes-empty">
+                <span class="seal seal-lg" aria-hidden="true">读</span>
+                <p class="notes-empty-title">还没有读书笔记</p>
+                <p class="notes-empty-desc">AI 将通读《${this.escapeHtml(book ? book.title : '')}》全书章节，分层生成逐章摘要与原文金句，再整合为一份结构化笔记。</p>
+                <p class="notes-empty-cost">全书通常需 3–5 分钟。章节摘要会自动缓存，重新生成只重跑整合，几乎不额外耗时。</p>
+            </div>`;
+        this.setTaskActions([
+            { label: '✨ 生成笔记', primary: true, onClick: () => this.runAgentTask('generate-notes', bookId, true, view) }
+        ], view);
+    }
+
+    // 关闭面板但任务继续：明确告知后台运行与完成通知
+    backgroundNotesTask(view) {
+        this.closeTaskModal(view);
+        this.showToast('任务仍在后台运行，完成后会自动保存并通知你', [], 4000);
+    }
+
+    closeNotesModal() {
+        if (this._notesRunningFor) this.backgroundNotesTask(this.notesView());
+        else this.closeTaskModal(this.notesView());
+    }
+
+    async deleteSavedNote(bookId, view) {
+        if (!confirm('确定删除已保存的读书笔记吗？删除后可重新生成。')) return;
+        try {
+            const res = await this.apiFetch(`/api/agent/task/result?bookId=${encodeURIComponent(bookId)}&taskType=generate-notes`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) { this.showToast('笔记已删除'); this.showNotesEmpty(bookId, view); }
+            else this.showToast(data.error || '删除失败');
+        } catch { this.showToast('删除失败'); }
+    }
+
+    async runAgentTask(taskType, bookId, force = false, view = this.agentTaskView()) {
         if (!this.isProviderConfigured()) { this.showModal(); return; }
         const book = this.books.find(b => b.id === bookId);
         const titleMap = { 'generate-notes': '生成读书笔记', 'character-analysis': '人物关系分析' };
+        const isNotes = view.kind === 'notes';
 
         // 非强制重生成时，优先复用已保存的结果
         if (!force) {
@@ -2037,15 +2240,21 @@ class AIReadingAssistant {
                 if (res.ok) {
                     const data = await res.json();
                     if (data.result && data.result.content) {
-                        this.showSavedTaskResult(taskType, bookId, data.result.content, data.result.updatedAt);
+                        this.showSavedTaskResult(taskType, bookId, data.result.content, data.result.updatedAt, view);
                         return;
                     }
                 }
             } catch {}
         }
 
-        this.openTaskModal(titleMap[taskType] || 'AI 智能任务');
-        this.appendTaskLog(`<div class="log-info">开始为《${book ? book.title : ''}》执行：${titleMap[taskType] || taskType}</div>`);
+        this.openTaskModal(isNotes ? `读书笔记 · ${book ? book.title : ''}` : (titleMap[taskType] || 'AI 智能任务'), view);
+        this.appendTaskLog(`<div class="log-info">开始为《${book ? book.title : ''}》执行：${titleMap[taskType] || taskType}</div>`, view);
+        if (isNotes) {
+            this._notesRunningFor = bookId;
+            if (this._notesOutcomes) delete this._notesOutcomes[bookId];
+            this.setTaskActions([{ label: '后台运行', onClick: () => this.backgroundNotesTask(view) }], view);
+            this.renderBooks();
+        }
 
         try {
             const response = await this.apiFetch('/api/agent/task', {
@@ -2054,7 +2263,11 @@ class AIReadingAssistant {
             });
             if (!response.ok) {
                 const data = await response.json();
-                this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`);
+                this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`, view);
+                if (isNotes) {
+                    this.setNotesOutcome(bookId, 'failed', data.error || '请求失败');
+                    if (!view.modal.classList.contains('visible')) this.showToast('笔记生成失败，可打开「笔记」查看原因并重试');
+                }
                 return;
             }
 
@@ -2072,62 +2285,108 @@ class AIReadingAssistant {
                     try {
                         const evt = JSON.parse(line.slice(6));
                         if (evt.type === 'task_start') {
-                            this.appendTaskLog(`<div class="log-info">📋 任务：${evt.taskName}（${evt.nodes.length} 个子 Agent 并行编排）</div>`);
+                            this.appendTaskLog(`<div class="log-info">📋 任务：${evt.taskName}（${evt.nodes.length} 个子 Agent 并行编排）</div>`, view);
                         } else if (evt.type === 'node_start') {
-                            this.appendTaskLog(`<div class="log-node">▶️ ${evt.name} 启动</div>`);
-                            this.setTaskProgress(this._taskPercent || 0, `${evt.name} 运行中…`);
+                            this.appendTaskLog(`<div class="log-node">▶️ ${evt.name} 启动</div>`, view);
+                            this.setTaskProgress(this._taskPercent || 0, `${evt.name} 运行中…`, view);
                         } else if (evt.type === 'node_progress') {
-                            this.appendTaskLog(`<div class="log-progress"> ${evt.stage || ''}</div>`);
-                            if (evt.stage) this.setTaskProgress(this._taskPercent || 0, evt.stage);
+                            if (evt.chunk) {
+                                this.appendNoteChunk(evt.chunk, view);
+                            } else {
+                                this.appendTaskLog(`<div class="log-progress"> ${evt.stage || ''}</div>`, view);
+                                if (evt.stage) this.setTaskProgress(this._taskPercent || 0, evt.stage, view);
+                            }
                         } else if (evt.type === 'node_done') {
-                            this.appendTaskLog(`<div class="log-success">✅ ${evt.name} 完成</div>`);
+                            this.appendTaskLog(`<div class="log-success">✅ ${evt.name} 完成</div>`, view);
                         } else if (evt.type === 'node_error') {
-                            this.appendTaskLog(`<div class="log-error">⚠️ ${evt.name} 失败：${evt.error}（已降级跳过）</div>`);
+                            this.appendTaskLog(`<div class="log-error">⚠️ ${evt.name} 失败：${evt.error}（已降级跳过）</div>`, view);
                         } else if (evt.type === 'progress') {
                             this._taskPercent = evt.percent;
-                            this.setTaskProgress(evt.percent, `${evt.progress}/${evt.total} 节点完成`);
+                            this.setTaskProgress(evt.percent, `${evt.progress}/${evt.total} 节点完成`, view);
                         } else if (evt.type === 'result') {
                             const final = evt.final || {};
                             const content = final.note || final.report || '';
                             if (content) {
-                                this.renderTaskResult(content);
+                                const sm = evt.outputs && evt.outputs.summaries;
+                                if (isNotes && sm && sm.cachedCount > 0) {
+                                    this.appendTaskLog(`<div class="log-success">♻️ 复用缓存章节摘要 ${sm.cachedCount}/${sm.totalChapters} 章，仅重跑整合</div>`, view);
+                                }
+                                this.renderTaskResult(content, view);
                                 this._taskContext = { taskType, bookId, content };
-                                this.showTaskResultActions(taskType, bookId);
-                            } else this.appendTaskLog(`<div class="log-error">⚠️ 任务未产生有效结果，请检查 API 密钥与模型是否可用（模型不支持或超时会导致所有子 Agent 降级失败）</div>`);
+                                this.showTaskResultActions(taskType, bookId, null, view);
+                                if (isNotes) {
+                                    this.setNotesOutcome(bookId, 'completed');
+                                    if (!view.modal.classList.contains('visible')) {
+                                        this.showToast(`《${book ? book.title : ''}》读书笔记已生成`, [{ label: '查看', onClick: () => this.openNotesModal(bookId) }], 8000);
+                                    }
+                                }
+                            } else {
+                                this.appendTaskLog(`<div class="log-error">⚠️ 任务未产生有效结果，请检查 API 密钥与模型是否可用（模型不支持或超时会导致所有子 Agent 降级失败）</div>`, view);
+                                if (isNotes) {
+                                    this.setNotesOutcome(bookId, 'failed', '任务未产生有效结果：模型不支持或超时，导致所有子 Agent 降级失败。');
+                                    if (!view.modal.classList.contains('visible')) this.showToast('笔记生成失败，可打开「笔记」查看原因并重试');
+                                }
+                            }
                         } else if (evt.type === 'task_done') {
-                            this.setTaskProgress(100, '任务完成');
+                            this.setTaskProgress(100, '任务完成', view);
                         } else if (evt.type === 'error') {
-                            this.appendTaskLog(`<div class="log-error">❌ ${evt.error}</div>`);
+                            this.appendTaskLog(`<div class="log-error">❌ ${evt.error}</div>`, view);
+                            if (isNotes) {
+                                this.setNotesOutcome(bookId, 'failed', evt.error || '任务执行出错');
+                                if (!view.modal.classList.contains('visible')) this.showToast('笔记生成失败，可打开「笔记」查看原因并重试');
+                            }
                         }
                     } catch {}
                 }
             }
         } catch {
-            this.appendTaskLog(`<div class="log-error">❌ 网络错误</div>`);
+            this.appendTaskLog(`<div class="log-error">❌ 网络错误</div>`, view);
+            if (isNotes) this.setNotesOutcome(bookId, 'failed', '网络错误：与服务器的连接中断，任务可能仍在服务器运行，请稍后重开查看。');
+        } finally {
+            if (isNotes) {
+                this._notesRunningFor = null;
+                this.renderBooks();
+            }
         }
     }
 
-    openTaskModal(title) {
-        document.getElementById('agentTaskTitle').textContent = title || 'AI 智能任务';
-        document.getElementById('taskLog').innerHTML = '';
-        document.getElementById('taskResult').style.display = 'none';
-        document.getElementById('taskResult').innerHTML = '';
-        document.getElementById('taskProgress').style.display = 'block';
-        this.setTaskActions([]);
+    setNotesOutcome(bookId, status, message = '') {
+        this._notesOutcomes = this._notesOutcomes || {};
+        this._notesOutcomes[bookId] = { status, message, at: Date.now() };
+    }
+
+    openTaskModal(title, view = this.agentTaskView()) {
+        view.title.textContent = title || 'AI 智能任务';
+        view.log.innerHTML = '';
+        view.log.style.display = '';
+        view.result.style.display = 'none';
+        view.result.innerHTML = '';
+        view.progress.style.display = 'block';
+        this.setTaskActions([], view);
         this._taskPercent = 0;
-        this.setTaskProgress(0, '准备中...');
-        this.agentTaskModal.classList.add('visible');
+        this._noteStream = '';
+        this.setTaskProgress(0, '准备中...', view);
+        view.modal.classList.add('visible');
+    }
+
+    // 整合层流式输出：边生成边显示纯文本，终态由 result 事件渲染为 Markdown
+    appendNoteChunk(chunk, view) {
+        this._noteStream = (this._noteStream || '') + chunk;
+        view.result.style.display = 'block';
+        view.result.textContent = this._noteStream;
+        view.result.scrollTop = view.result.scrollHeight;
+        this.setTaskProgress(this._taskPercent || 0, '整合输出中…', view);
     }
 
     // 动态设置任务弹窗的操作按钮
-    setTaskActions(actions) {
-        const bar = document.getElementById('taskActionBar');
+    setTaskActions(actions, view = this.agentTaskView()) {
+        const bar = view.actions;
         if (!bar) return;
         if (!actions || !actions.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.innerHTML = '';
         actions.forEach(a => {
             const btn = document.createElement('button');
-            btn.className = `btn ${a.primary ? 'btn-primary' : 'btn-secondary'}`;
+            btn.className = `btn ${a.primary ? 'btn-primary' : a.danger ? 'btn-danger-ghost' : 'btn-secondary'}`;
             btn.textContent = a.label;
             btn.addEventListener('click', a.onClick);
             bar.appendChild(btn);
@@ -2136,26 +2395,30 @@ class AIReadingAssistant {
     }
 
     // 展示已保存的任务结果（无需重新生成）
-    showSavedTaskResult(taskType, bookId, content, updatedAt) {
+    showSavedTaskResult(taskType, bookId, content, updatedAt, view = this.agentTaskView()) {
         const titleMap = { 'generate-notes': '读书笔记', 'character-analysis': '人物关系分析' };
-        document.getElementById('agentTaskTitle').textContent = titleMap[taskType] || 'AI 智能任务';
-        document.getElementById('taskLog').innerHTML = '';
-        document.getElementById('taskProgress').style.display = 'none';
+        if (view.kind !== 'notes') view.title.textContent = titleMap[taskType] || 'AI 智能任务';
+        view.log.innerHTML = '';
+        view.progress.style.display = 'none';
         this._taskContext = { taskType, bookId, content };
-        this.renderTaskResult(content);
-        this.showTaskResultActions(taskType, bookId, updatedAt);
-        this.agentTaskModal.classList.add('visible');
+        this.renderTaskResult(content, view);
+        this.showTaskResultActions(taskType, bookId, updatedAt, view);
+        view.modal.classList.add('visible');
     }
 
-    // 结果视图的操作按钮：导出 / 查看阅读 / 重新生成
-    showTaskResultActions(taskType, bookId, updatedAt) {
+    // 结果视图的操作按钮：导出 / 查看阅读 / 重新生成（笔记另有删除）
+    showTaskResultActions(taskType, bookId, updatedAt, view = this.agentTaskView()) {
         const timeText = updatedAt ? `（生成于 ${new Date(updatedAt).toLocaleString('zh-CN')}）` : '';
-        this.appendTaskLog(`<div class="log-success">✅ 已展示上次生成的结果${timeText}，可导出或重新生成</div>`);
-        this.setTaskActions([
+        this.appendTaskLog(`<div class="log-success">${updatedAt ? `✅ 已展示上次生成的结果${timeText}` : '✅ 笔记已生成并自动保存'}</div>`, view);
+        const actions = [
             { label: '📥 导出 Markdown', onClick: () => this.exportTaskResult() },
-            { label: '📖 查看阅读', onClick: () => { this.closeTaskModal(); this.openBook(bookId); } },
-            { label: '🔄 重新生成', primary: true, onClick: () => this.runAgentTask(taskType, bookId, true) }
-        ]);
+            { label: '📖 查看阅读', onClick: () => { this.closeTaskModal(view); this.openBook(bookId); } },
+            { label: '🔄 重新生成', primary: true, onClick: () => this.runAgentTask(taskType, bookId, true, view) }
+        ];
+        if (view.kind === 'notes') {
+            actions.push({ label: '删除笔记', danger: true, onClick: () => this.deleteSavedNote(bookId, view) });
+        }
+        this.setTaskActions(actions, view);
     }
 
     // 导出任务结果为 .md 文件
@@ -2174,27 +2437,26 @@ class AIReadingAssistant {
         this.showToast('已导出');
     }
 
-    closeTaskModal() {
-        this.agentTaskModal.classList.remove('visible');
+    closeTaskModal(view = this.agentTaskView()) {
+        view.modal.classList.remove('visible');
     }
 
-    appendTaskLog(html) {
-        const log = document.getElementById('taskLog');
+    appendTaskLog(html, view = this.agentTaskView()) {
         const line = document.createElement('div');
         line.innerHTML = html;
-        log.appendChild(line);
-        log.scrollTop = log.scrollHeight;
+        view.log.style.display = '';
+        view.log.appendChild(line);
+        view.log.scrollTop = view.log.scrollHeight;
     }
 
-    setTaskProgress(percent, text) {
-        document.getElementById('taskProgressFill').style.width = percent + '%';
-        document.getElementById('taskProgressText').textContent = text;
+    setTaskProgress(percent, text, view = this.agentTaskView()) {
+        view.fill.style.width = percent + '%';
+        view.text.textContent = text;
     }
 
-    renderTaskResult(content) {
-        const result = document.getElementById('taskResult');
-        result.style.display = 'block';
-        result.innerHTML = this.renderMarkdown(content);
+    renderTaskResult(content, view = this.agentTaskView()) {
+        view.result.style.display = 'block';
+        view.result.innerHTML = this.renderMarkdown(content);
     }
 
     renderMarkdown(text) {
@@ -2204,85 +2466,45 @@ class AIReadingAssistant {
         html = html.replace(/^## (.+)$/gm, '<h3>$1</h3>');
         html = html.replace(/^# (.+)$/gm, '<h2>$1</h2>');
         html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+        html = html.replace(/^- (.+)$/gm, '<div class="md-li">$1</div>');
         html = html.replace(/\n/g, '<br>');
+        // 块级元素前后的 <br> 去掉，避免多余空行
+        html = html.replace(/<br>\s*(<(?:h2|h3|h4|blockquote|div class="md-li")>)/g, '$1');
+        html = html.replace(/(<\/(?:h2|h3|h4|blockquote|div)>)\s*<br>/g, '$1');
         return html;
     }
 
     // ==================== Providers ====================
+
+    static PRESETS = {
+        siliconflow: { name: '硅基流动', endpoint: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3', models: 'Qwen/Qwen2.5-72B-Instruct\nTHUDM/glm-4-9b-chat' },
+        dashscope: { name: '阿里云百炼', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', models: 'qwen-turbo\nqwen-max' },
+        deepseek: { name: 'DeepSeek', endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat', models: 'deepseek-reasoner' },
+        zhipu: { name: '智谱', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus', models: 'glm-4-air\nglm-4-flash' },
+        moonshot: { name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', models: 'moonshot-v1-32k\nmoonshot-v1-128k' },
+        openai: { name: 'OpenAI', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini', models: 'gpt-4o' }
+    };
 
     async loadProviders() {
         try {
             const response = await this.apiFetch('/api/providers');
             const data = await response.json();
             this.providers = data.providers || [];
-            // 单一通用自定义端点：保存的选择失效（含旧内置预设）时回落到第一个自定义提供商
+            // 保存的选择失效（含旧内置预设）时回落到第一个自定义提供商
             const customs = this.providers.filter(p => p.isCustom);
             if (!customs.some(p => p.id === this.currentProvider)) {
                 this.currentProvider = customs.length ? customs[0].id : 'custom';
                 localStorage.setItem('selectedProvider', this.currentProvider);
             }
-            this.renderProviderTabs();
-            this.switchProvider(this.currentProvider);
+            if (this.currentProvider !== 'custom') {
+                this.currentModel = localStorage.getItem(`selectedModel_${this.currentProvider}`) || null;
+            }
+            this.renderProviders();
         } catch (error) { console.error('加载提供商失败:', error); }
     }
 
-    renderProviderTabs() {
-        // 只保留通用自定义（OpenAI 兼容）提供商；内置预设不再在 Web UI 暴露
-        let html = this.providers.filter(p => p.isCustom).map(p =>
-            `<button class="provider-tab${p.id === this.currentProvider ? ' active' : ''}" data-provider="${p.id}">${this.escapeHtml(p.name)}</button>`
-        ).join('');
-        html += `<button class="provider-tab${this.currentProvider === 'custom' ? ' active' : ''}" data-provider="custom">+ 自定义</button>`;
-        this.providerTabs.innerHTML = html;
-        this.providerTabs.querySelectorAll('.provider-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                const provider = e.currentTarget.dataset.provider;
-                if (provider === 'custom') this.showCustomProviderView();
-                else this.switchProvider(provider);
-            });
-        });
-    }
-
-    switchProvider(provider) {
-        if (provider === 'custom' || !this.providers.find(p => p.id === provider && p.isCustom)) {
-            this.showCustomProviderView();
-            return;
-        }
-        this.showCustomProviderSettings(provider);
-    }
-
     getCustomModels(providerId) { try { return JSON.parse(localStorage.getItem(`customModels_${providerId}`)) || []; } catch { return []; } }
-    saveCustomModels(providerId, models) { localStorage.setItem(`customModels_${providerId}`, JSON.stringify(models)); }
-
-    addCustomModel() {
-        const input = document.getElementById('customModelId');
-        const modelId = input.value.trim();
-        if (!modelId) { this.showToast('请输入模型ID'); return; }
-        const customModels = this.getCustomModels(this.currentProvider);
-        if (customModels.some(m => m.id === modelId)) { this.showToast('模型已存在'); return; }
-        const pi = this.providers.find(p => p.id === this.currentProvider);
-        if ((pi?.models || []).some(m => m.id === modelId) || pi?.defaultModel === modelId) { this.showToast('模型已在默认列表中'); return; }
-        customModels.push({ id: modelId, name: modelId });
-        this.saveCustomModels(this.currentProvider, customModels);
-        input.value = '';
-        this.showToast(`已添加: ${modelId}`);
-        this.switchProvider(this.currentProvider);
-    }
-
-    removeCustomModel(providerId, modelId) {
-        let customModels = this.getCustomModels(providerId).filter(m => m.id !== modelId);
-        this.saveCustomModels(providerId, customModels);
-        if (this.currentModel === modelId) { const pi = this.providers.find(p => p.id === providerId); this.currentModel = pi?.defaultModel || null; localStorage.setItem(`selectedModel_${providerId}`, this.currentModel || ''); }
-        this.switchProvider(providerId);
-    }
-
-    renderCustomModelTags(providerId) {
-        const c = document.getElementById('customModelTags');
-        if (!c) return;
-        const customModels = this.getCustomModels(providerId);
-        if (!customModels.length) { c.innerHTML = ''; return; }
-        c.innerHTML = customModels.map(m => `<span class="model-tag">${this.escapeHtml(m.name)}<button class="tag-remove" data-model-id="${this.escapeHtml(m.id)}">×</button></span>`).join('');
-        c.querySelectorAll('.tag-remove').forEach(btn => btn.addEventListener('click', () => this.removeCustomModel(providerId, btn.dataset.modelId)));
-    }
 
     getProviderModels(providerInfo) {
         const models = [], addedIds = new Set();
@@ -2292,131 +2514,285 @@ class AIReadingAssistant {
         return models;
     }
 
-    showCustomProviderView() {
-        this.providerTabs.querySelectorAll('.provider-tab').forEach(t => t.classList.toggle('active', t.dataset.provider === 'custom'));
-        document.querySelector('.api-key-form').style.display = 'none';
-        document.getElementById('apiInfoSection').style.display = 'none';
-        // 自定义"添加/列表"视图与单个内置提供商的密钥状态无关，隐藏该状态块避免误导
-        document.getElementById('apiKeyStatus').style.display = 'none';
-        document.getElementById('customProvidersSection').style.display = 'block';
-        document.getElementById('addProviderForm').style.display = 'block';
-        this.renderCustomProvidersList();
+    providerMarkColor(id) {
+        const covers = ['#1e5b45', '#c2401f', '#3b4a6b', '#b45309', '#2a7d7b', '#7d3a5c', '#6b7a2a', '#4a5568'];
+        let h = 0;
+        for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+        return covers[h % covers.length];
     }
 
-    showCustomProviderSettings(providerId) {
-        const pi = this.providers.find(p => p.id === providerId);
-        if (!pi) return;
-        this.currentProvider = providerId;
-        this.currentModel = localStorage.getItem(`selectedModel_${providerId}`) || null;
-        localStorage.setItem('selectedProvider', providerId);
-        this.providerTabs.querySelectorAll('.provider-tab').forEach(t => t.classList.toggle('active', t.dataset.provider === providerId));
-        document.querySelector('.api-key-form').style.display = 'block';
-        document.getElementById('apiKeyStatus').style.display = 'block';
-        document.getElementById('customProvidersSection').style.display = 'block';
-        document.getElementById('addProviderForm').style.display = 'none';
-        document.getElementById('apiInfoSection').style.display = 'none';
-        if (this.apiKeyLabel) this.apiKeyLabel.textContent = `${pi.name} API密钥`;
-        if (this.apiKeyHint) this.apiKeyHint.innerHTML = `请输入 ${pi.name} API密钥`;
-        if (this.modelSelectGroup) {
-            const models = this.getProviderModels(pi);
-            if (models.length > 0) {
-                this.modelSelectGroup.style.display = 'block';
-                const savedModel = this.currentModel || pi.defaultModel;
-                this.modelSelect.innerHTML = models.map(m => `<option value="${m.id}"${m.id === savedModel ? ' selected' : ''}>${m.name}</option>`).join('');
-                this.modelSelect.onchange = (e) => { this.currentModel = e.target.value; localStorage.setItem(`selectedModel_${providerId}`, e.target.value); };
-            } else { this.modelSelectGroup.style.display = 'none'; }
+    renderProviders() {
+        if (!this.providerList) return;
+        const customs = this.providers.filter(p => p.isCustom);
+        const empty = document.getElementById('providerEmpty');
+        if (!customs.length) {
+            this.providerList.innerHTML = '';
+            if (empty) empty.hidden = false;
+            return;
         }
-        this.renderCustomProvidersList();
-        this.checkApiKeyStatus();
+        if (empty) empty.hidden = true;
+        this.providerList.innerHTML = customs.map(p => this.providerCardHtml(p)).join('');
     }
 
-    renderCustomProvidersList() {
-        const container = document.getElementById('customProvidersList');
-        const customProviders = this.providers.filter(p => p.isCustom);
-        if (!customProviders.length) { container.innerHTML = '<p class="empty-custom">暂无自定义提供商</p>'; return; }
-        container.innerHTML = customProviders.map(p => {
-            const isActive = p.id === this.currentProvider;
-            const models = this.getProviderModels(p);
-            let modelSelector = '';
-            if (models.length > 0) {
-                const sel = this.currentModel || p.defaultModel;
-                modelSelector = `<div class="model-selector-inline"><label>模型：</label><select class="custom-model-select" data-provider-id="${p.id}">${models.map(m => `<option value="${m.id}"${m.id === sel ? ' selected' : ''}>${m.name}</option>`).join('')}</select></div>`;
-            }
-            return `<div class="custom-provider-item${isActive ? ' active' : ''}" data-provider-id="${p.id}"><div class="custom-provider-info"><div class="custom-provider-name">${this.escapeHtml(p.name)}</div><div class="custom-provider-id">ID: ${p.id}</div>${modelSelector}</div><div class="custom-provider-actions"><button class="btn btn-primary btn-sm select-provider-btn" data-provider="${p.id}">选择</button><button class="btn btn-danger btn-sm delete-provider-btn" data-provider="${p.id}">删除</button></div></div>`;
-        }).join('');
-        container.querySelectorAll('.select-provider-btn').forEach(b => b.addEventListener('click', (e) => this.showCustomProviderSettings(e.currentTarget.dataset.provider)));
-        container.querySelectorAll('.delete-provider-btn').forEach(b => b.addEventListener('click', (e) => this.deleteCustomProvider(e.currentTarget.dataset.provider)));
-        container.querySelectorAll('.custom-model-select').forEach(s => s.addEventListener('change', (e) => {
-            const pid = e.currentTarget.dataset.providerId;
-            this.currentProvider = pid;
-            this.currentModel = e.target.value;
-            localStorage.setItem('selectedProvider', pid);
-            localStorage.setItem(`selectedModel_${pid}`, e.target.value);
-        }));
+    providerCardHtml(p) {
+        const active = p.id === this.currentProvider;
+        const keyInfo = this.apiProviders[p.id] || {};
+        const models = this.getProviderModels(p);
+        const model = (active ? this.currentModel : null) || p.defaultModel || '';
+        const host = (p.apiEndpoint || '').replace(/^https?:\/\//, '').replace(/\/chat\/completions$/, '');
+        const initial = (p.name || '?').trim().charAt(0).toUpperCase();
+        const esc = (s) => this.escapeHtml(String(s == null ? '' : s));
+
+        const badges = [
+            active ? '<span class="badge badge-active">使用中</span>' : '',
+            keyInfo.hasKey ? '<span class="badge badge-ok">已连接</span>' : '<span class="badge badge-warn">未配置密钥</span>'
+        ].join('');
+
+        const subParts = [];
+        if (host) subParts.push(esc(host));
+        if (keyInfo.maskedKey) subParts.push(`<span class="masked">${esc(keyInfo.maskedKey)}</span>`);
+        if (keyInfo.lastUpdated) subParts.push(`更新于 ${new Date(keyInfo.lastUpdated).toLocaleDateString('zh-CN')}`);
+
+        const modelRow = active && models.length
+            ? `<div class="provider-model-row"><span>模型</span><select class="model-select-inline" data-provider-id="${esc(p.id)}" title="切换当前模型">${models.map(m => `<option value="${esc(m.id)}"${m.id === model ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>`
+            : `<div class="provider-model-row"><span>默认模型</span><strong>${esc(model)}</strong></div>`;
+
+        return `
+            <article class="provider-card${active ? ' is-active' : ''}" data-provider-id="${esc(p.id)}">
+                <div class="provider-mark" style="--mark:${this.providerMarkColor(p.id)}">${esc(initial)}</div>
+                <div class="provider-main">
+                    <div class="provider-name-row"><span class="provider-name">${esc(p.name)}</span>${badges}</div>
+                    <div class="provider-sub mono">${subParts.join(' · ')}</div>
+                    ${modelRow}
+                </div>
+                <div class="provider-actions">
+                    ${active ? '' : '<button class="btn btn-secondary btn-sm" data-action="activate">启用</button>'}
+                    <button class="icon-btn" data-action="verify" title="测试连接">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    </button>
+                    <button class="icon-btn" data-action="edit" title="编辑提供商">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                    </button>
+                    <button class="icon-btn danger" data-action="delete" title="删除提供商">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </article>`;
     }
 
-    async addCustomProvider() {
-        const name = document.getElementById('customProviderName').value.trim();
-        const apiEndpoint = document.getElementById('customProviderEndpoint').value.trim();
-        const defaultModel = document.getElementById('customProviderModel').value.trim();
-        const modelsStr = document.getElementById('customProviderModels').value.trim();
-        const apiKey = document.getElementById('customProviderApiKey').value.trim();
-        if (!name || !apiEndpoint || !defaultModel || !apiKey) { this.showToast('请填写所有必填项'); return; }
-        let models = null;
-        if (modelsStr) { try { models = JSON.parse(modelsStr); if (!Array.isArray(models)) { this.showToast('模型列表必须是JSON数组'); return; } } catch { this.showToast('JSON格式错误'); return; } }
-        const btn = document.getElementById('addProviderBtn');
+    activateProvider(providerId) {
+        const p = this.providers.find(x => x.id === providerId);
+        if (!p) return;
+        this.currentProvider = providerId;
+        this.currentModel = localStorage.getItem(`selectedModel_${providerId}`) || p.defaultModel || null;
+        localStorage.setItem('selectedProvider', providerId);
+        if (this.currentModel) localStorage.setItem(`selectedModel_${providerId}`, this.currentModel);
+        this.renderProviders();
+        this.showToast(`已切换到「${p.name}」`);
+    }
+
+    async verifyProvider(providerId, btn) {
+        const p = this.providers.find(x => x.id === providerId);
+        if (btn) btn.classList.add('loading');
+        try {
+            const response = await this.apiFetch('/api/key/verify', { method: 'POST', body: JSON.stringify({ provider: providerId }) });
+            const data = await response.json();
+            this.showToast(data.valid ? `「${p ? p.name : providerId}」连接正常` : (data.error || '验证失败：密钥无效或端点不可达'));
+        } catch { this.showToast('验证失败：网络错误'); }
+        finally { if (btn) btn.classList.remove('loading'); }
+    }
+
+    openProviderModal(mode, provider = null) {
+        this._pmMode = mode;
+        this._pmId = provider ? provider.id : null;
+        const isEdit = mode === 'edit';
+        document.getElementById('providerModalTitle').textContent = isEdit ? '编辑提供商' : '添加提供商';
+        document.getElementById('pmPresetRow').style.display = isEdit ? 'none' : '';
+        document.getElementById('pmName').value = provider ? provider.name : '';
+        document.getElementById('pmEndpoint').value = provider ? (provider.apiEndpoint || '') : '';
+        document.getElementById('pmModel').value = provider ? (provider.defaultModel || '') : '';
+        document.getElementById('pmModels').value = provider ? (provider.models || []).map(m => m.id).join('\n') : '';
+        document.getElementById('pmKey').value = '';
+        const keyInfo = provider ? (this.apiProviders[provider.id] || {}) : {};
+        document.getElementById('pmKeyStatus').textContent = isEdit && keyInfo.hasKey ? `（已配置 ${keyInfo.maskedKey || ''}，留空则不修改）` : '';
+        document.getElementById('pmKeyRequired').style.display = isEdit ? 'none' : '';
+        document.getElementById('pmKeyHint').textContent = isEdit ? '留空保持现有密钥；填写新密钥会先验证再替换。' : '保存前会先向该端点验证密钥，确认可用后才写入。';
+        document.getElementById('pmDeleteKeyBtn').style.display = isEdit && keyInfo.hasKey ? '' : 'none';
+        document.getElementById('pmError').style.display = 'none';
+        document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
+        this.providerModal.classList.add('visible');
+        document.getElementById('pmName').focus();
+    }
+
+    closeProviderModal() {
+        this.providerModal.classList.remove('visible');
+        document.getElementById('pmError').style.display = 'none';
+    }
+
+    applyProviderPreset(key, chip) {
+        const preset = AIReadingAssistant.PRESETS[key];
+        if (!preset) return;
+        document.getElementById('pmName').value = preset.name;
+        document.getElementById('pmEndpoint').value = preset.endpoint;
+        document.getElementById('pmModel').value = preset.model;
+        document.getElementById('pmModels').value = preset.models || '';
+        document.querySelectorAll('.preset-chip').forEach(c => c.classList.toggle('active', c === chip));
+        document.getElementById('pmKey').focus();
+    }
+
+    parseModelList(text) {
+        const ids = [...new Set(String(text || '').split(/[\n,，;；]/).map(s => s.trim()).filter(Boolean))];
+        return ids.map(id => ({ id, name: id }));
+    }
+
+    async saveProviderFromModal() {
+        const name = document.getElementById('pmName').value.trim();
+        const apiEndpoint = document.getElementById('pmEndpoint').value.trim();
+        const defaultModel = document.getElementById('pmModel').value.trim();
+        const models = this.parseModelList(document.getElementById('pmModels').value);
+        const apiKey = document.getElementById('pmKey').value.trim();
+        const isEdit = this._pmMode === 'edit';
+        const errEl = document.getElementById('pmError');
+        const fail = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+
+        if (!name || !apiEndpoint || !defaultModel) { fail('请填写名称、API 地址和默认模型'); return; }
+        if (!isEdit && !apiKey) { fail('请填写 API 密钥'); return; }
+        errEl.style.display = 'none';
+
+        const btn = document.getElementById('pmSaveBtn');
         btn.classList.add('loading'); btn.disabled = true;
         try {
-            const response = await this.apiFetch('/api/providers', { method: 'POST', body: JSON.stringify({ name, apiEndpoint, defaultModel, models, apiKey }) });
-            const data = await response.json();
-            if (response.ok) {
-                this.showToast('自定义提供商添加成功！');
-                ['customProviderName', 'customProviderEndpoint', 'customProviderModel', 'customProviderModels', 'customProviderApiKey'].forEach(id => document.getElementById(id).value = '');
+            if (!isEdit) {
+                const response = await this.apiFetch('/api/providers', {
+                    method: 'POST',
+                    body: JSON.stringify({ name, apiEndpoint, defaultModel, models: models.length ? models : null, apiKey })
+                });
+                const data = await response.json();
+                if (!response.ok) { fail(data.error || '添加失败'); return; }
+                this.closeProviderModal();
+                this.showToast(`「${name}」已添加，密钥验证通过`);
                 await this.loadProviders();
-            } else { this.showToast(data.error || '添加失败'); }
-        } catch { this.showToast('添加失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
+                await this.checkApiKeyStatus();
+                if (data.provider && data.provider.id) {
+                    this.currentProvider = data.provider.id;
+                    this.currentModel = defaultModel;
+                    localStorage.setItem('selectedProvider', this.currentProvider);
+                    localStorage.setItem(`selectedModel_${this.currentProvider}`, defaultModel);
+                    this.renderProviders();
+                }
+            } else {
+                const response = await this.apiFetch(`/api/providers/${this._pmId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ name, apiEndpoint, defaultModel, models: models.length ? models : null })
+                });
+                const data = await response.json();
+                if (!response.ok) { fail(data.error || '保存失败'); return; }
+                if (apiKey) {
+                    const keyRes = await this.apiFetch('/api/key/set', { method: 'POST', body: JSON.stringify({ apiKey, provider: this._pmId }) });
+                    if (!keyRes.ok) {
+                        const kd = await keyRes.json().catch(() => ({}));
+                        fail(`提供商信息已保存，但新密钥验证失败：${kd.error || '请检查密钥'}`);
+                        await this.loadProviders();
+                        await this.checkApiKeyStatus();
+                        return;
+                    }
+                }
+                this.closeProviderModal();
+                this.showToast('提供商已保存');
+                await this.loadProviders();
+                await this.checkApiKeyStatus();
+            }
+        } catch { fail('网络错误，请检查服务器连接'); }
+        finally { btn.classList.remove('loading'); btn.disabled = false; }
     }
 
-    async deleteCustomProvider(providerId) {
+    async deleteProvider(providerId) {
         const p = this.providers.find(x => x.id === providerId);
-        if (!p || !confirm(`确定删除 "${p.name}" 吗？`)) return;
+        if (!p || !confirm(`确定删除「${p.name}」吗？其 API 密钥将一并删除。`)) return;
         try {
             const response = await this.apiFetch(`/api/providers/${providerId}`, { method: 'DELETE' });
             const data = await response.json();
             if (data.success) {
                 this.showToast('已删除');
                 if (this.currentProvider === providerId) {
-                    const rest = this.providers.filter(p => p.isCustom && p.id !== providerId);
+                    const rest = this.providers.filter(x => x.isCustom && x.id !== providerId);
                     this.currentProvider = rest.length ? rest[0].id : 'custom';
+                    this.currentModel = null;
                     localStorage.setItem('selectedProvider', this.currentProvider);
                 }
                 await this.loadProviders();
-                this.checkApiKeyStatus();
+                await this.checkApiKeyStatus();
             } else { this.showToast(data.error || '删除失败'); }
         } catch { this.showToast('删除失败'); }
     }
 
-    initCustomProviderListeners() {
-        document.getElementById('addProviderBtn').addEventListener('click', () => this.addCustomProvider());
-        document.getElementById('toggleCustomKeyVisibility').addEventListener('click', () => this.toggleKeyVisibility('customProviderApiKey'));
+    async deleteProviderKeyFromModal() {
+        const providerId = this._pmId;
+        if (!providerId || !confirm('确定删除该提供商的 API 密钥吗？删除后 AI 功能将暂停，直到重新配置。')) return;
+        try {
+            const response = await this.apiFetch('/api/key', { method: 'DELETE', body: JSON.stringify({ provider: providerId }) });
+            const data = await response.json();
+            if (data.success) {
+                this.showToast('密钥已删除');
+                await this.checkApiKeyStatus();
+                document.getElementById('pmKeyStatus').textContent = '';
+                document.getElementById('pmKeyRequired').style.display = '';
+                document.getElementById('pmDeleteKeyBtn').style.display = 'none';
+            } else { this.showToast(data.error || '删除失败'); }
+        } catch { this.showToast('删除失败'); }
+    }
+
+    initProviderListeners() {
+        document.getElementById('addProviderBtn').addEventListener('click', () => this.openProviderModal('add'));
+        document.getElementById('emptyAddProviderBtn').addEventListener('click', () => this.openProviderModal('add'));
+        document.getElementById('pmCloseBtn').addEventListener('click', () => this.closeProviderModal());
+        document.getElementById('pmCancelBtn').addEventListener('click', () => this.closeProviderModal());
+        document.getElementById('pmSaveBtn').addEventListener('click', () => this.saveProviderFromModal());
+        document.getElementById('pmDeleteKeyBtn').addEventListener('click', () => this.deleteProviderKeyFromModal());
+        document.getElementById('pmKeyToggle').addEventListener('click', () => this.toggleKeyVisibility('pmKey'));
+        this.providerModal.addEventListener('click', (e) => { if (e.target === this.providerModal) this.closeProviderModal(); });
+        document.getElementById('pmKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.saveProviderFromModal(); } });
+        document.getElementById('pmPresetRow').addEventListener('click', (e) => {
+            const chip = e.target.closest('.preset-chip');
+            if (chip) this.applyProviderPreset(chip.dataset.preset, chip);
+        });
+
+        // 卡片操作（事件委托）
+        this.providerList.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const card = btn.closest('.provider-card');
+            if (!card) return;
+            const id = card.dataset.providerId;
+            switch (btn.dataset.action) {
+                case 'activate': this.activateProvider(id); break;
+                case 'verify': this.verifyProvider(id, btn); break;
+                case 'edit': this.openProviderModal('edit', this.providers.find(p => p.id === id)); break;
+                case 'delete': this.deleteProvider(id); break;
+            }
+        });
+        this.providerList.addEventListener('change', (e) => {
+            const sel = e.target.closest('.model-select-inline');
+            if (!sel) return;
+            this.currentModel = sel.value;
+            localStorage.setItem(`selectedModel_${sel.dataset.providerId}`, sel.value);
+        });
     }
 
     // ==================== API Key ====================
 
     initApiKeyListeners() {
-        document.getElementById('toggleVisibilityBtn').addEventListener('click', () => this.toggleKeyVisibility('apiKeyInput'));
-        document.getElementById('saveApiKeyBtn').addEventListener('click', () => this.saveApiKey());
-        document.getElementById('verifyApiKeyBtn').addEventListener('click', () => this.verifyApiKey());
-        document.getElementById('deleteApiKeyBtn').addEventListener('click', () => this.deleteApiKey());
         document.getElementById('closeModalBtn').addEventListener('click', () => this.hideModal());
         document.getElementById('modalCancelBtn').addEventListener('click', () => this.hideModal());
         document.getElementById('modalSaveBtn').addEventListener('click', () => this.saveApiKeyFromModal());
-        const addModelBtn = document.getElementById('addModelBtn');
-        if (addModelBtn) addModelBtn.addEventListener('click', () => this.addCustomModel());
-        const customModelIdInput = document.getElementById('customModelId');
-        if (customModelIdInput) customModelIdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.addCustomModel(); } });
+        document.getElementById('modalSetupBtn').addEventListener('click', () => {
+            this.hideModal();
+            if (this.isReading) this.exitReading();
+            this.switchView('settings');
+            this.switchSettingsPage('models');
+            this.openProviderModal('add');
+        });
         this.apiKeyModal.addEventListener('click', (e) => { if (e.target === this.apiKeyModal) this.hideModal(); });
-        document.getElementById('apiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveApiKey(); });
         document.getElementById('modalApiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveApiKeyFromModal(); });
 
         // 智能索引（RAG）设置
@@ -2459,14 +2835,18 @@ class AIReadingAssistant {
             document.getElementById('embedCustomKeyStatus').textContent = custom.hasKey ? `（已配置 ${custom.maskedKey || ''}，留空则不修改）` : '';
             document.getElementById('deleteCustomEmbedKeyBtn').style.display = custom.maskedKey ? 'inline-flex' : 'none';
             const hint = document.getElementById('embedActiveHint');
+            hint.classList.remove('is-ok', 'is-warn');
             if (!data.vectorAvailable) {
                 hint.textContent = '⚠️ 服务端向量扩展不可用，当前仅支持 BM25 检索';
+                hint.classList.add('is-warn');
             } else if (data.provider === 'off') {
                 hint.textContent = '已关闭向量化，建索引时仅使用 BM25 关键词检索';
             } else if (data.active) {
                 hint.textContent = `✅ 当前生效：${data.active.providerName} · ${data.active.model}`;
+                hint.classList.add('is-ok');
             } else {
                 hint.textContent = '⚠️ 暂无可用的向量化提供商（未配置密钥），建索引时将使用 BM25。';
+                hint.classList.add('is-warn');
             }
             this.updateEmbedConfigVisibility();
             this.loadRerankSettings();
@@ -2547,7 +2927,16 @@ class AIReadingAssistant {
             document.getElementById('rerankKeyStatus').textContent = data.hasKey ? `（已配置 ${data.maskedKey || ''}，留空则不修改）` : '';
             document.getElementById('deleteRerankKeyBtn').style.display = data.maskedKey ? 'inline-flex' : 'none';
             const hint = document.getElementById('rerankActiveHint');
-            hint.textContent = data.active ? `✅ 当前生效：${data.active.model} · Top ${data.active.topN}` : (data.enabled ? '⚠️ 已启用但配置不完整（需地址/模型/密钥）' : '未启用');
+            hint.classList.remove('is-ok', 'is-warn');
+            if (data.active) {
+                hint.textContent = `✅ 当前生效：${data.active.model} · Top ${data.active.topN}`;
+                hint.classList.add('is-ok');
+            } else if (data.enabled) {
+                hint.textContent = '⚠️ 已启用但配置不完整（需地址/模型/密钥）';
+                hint.classList.add('is-warn');
+            } else {
+                hint.textContent = '未启用';
+            }
             this.updateRerankConfigVisibility();
         } catch {}
     }
@@ -2590,71 +2979,15 @@ class AIReadingAssistant {
     }
 
     async checkApiKeyStatus() {
-        const keyStatusValue = document.getElementById('keyStatusValue');
-        if (keyStatusValue) { keyStatusValue.textContent = '检查中...'; keyStatusValue.className = 'status-value'; }
         try {
             const response = await this.apiFetch('/api/key/status');
             const data = await response.json();
             this.apiProviders = data.providers || {};
-            const providerData = this.apiProviders[this.currentProvider] || {};
-            if (providerData.hasKey) {
-                if (keyStatusValue) { keyStatusValue.textContent = '已配置'; keyStatusValue.className = 'status-value connected'; }
-                document.getElementById('maskedKeyRow').style.display = 'flex';
-                document.getElementById('maskedKeyValue').textContent = providerData.maskedKey;
-                if (providerData.lastUpdated) { document.getElementById('lastUpdatedRow').style.display = 'flex'; document.getElementById('lastUpdatedValue').textContent = new Date(providerData.lastUpdated).toLocaleString('zh-CN'); }
-                document.getElementById('deleteApiKeyBtn').style.display = 'inline-flex';
-                const pi = this.providers.find(p => p.id === this.currentProvider);
-                if (pi) { document.getElementById('modelRow').style.display = 'flex'; document.getElementById('modelValue').textContent = this.currentModel || pi.defaultModel; }
-            } else {
-                if (keyStatusValue) { keyStatusValue.textContent = '未配置'; keyStatusValue.className = 'status-value disconnected'; }
-                document.getElementById('maskedKeyRow').style.display = 'none';
-                document.getElementById('lastUpdatedRow').style.display = 'none';
-                document.getElementById('deleteApiKeyBtn').style.display = 'none';
-                document.getElementById('modelRow').style.display = 'none';
-            }
-        } catch {
-            if (keyStatusValue) { keyStatusValue.textContent = '检查失败'; keyStatusValue.className = 'status-value disconnected'; }
-        }
+        } catch { this.apiProviders = this.apiProviders || {}; }
+        this.renderProviders();
     }
 
     toggleKeyVisibility(inputId) { const i = document.getElementById(inputId); i.type = i.type === 'password' ? 'text' : 'password'; }
-
-    async saveApiKey() {
-        const input = document.getElementById('apiKeyInput');
-        const apiKey = input.value.trim();
-        if (!apiKey) { this.showToast('请输入API密钥'); return; }
-        if (!this.providers.find(p => p.id === this.currentProvider && p.isCustom)) { this.showToast('请先添加自定义提供商'); return; }
-        const btn = document.getElementById('saveApiKeyBtn');
-        btn.classList.add('loading'); btn.disabled = true;
-        try {
-            const response = await this.apiFetch('/api/key/set', { method: 'POST', body: JSON.stringify({ apiKey, provider: this.currentProvider }) });
-            const data = await response.json();
-            if (response.ok) { this.showToast('API密钥保存成功！'); input.value = ''; this.checkApiKeyStatus(); }
-            else { this.showToast(data.error || '保存失败'); }
-        } catch { this.showToast('保存失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
-    }
-
-    async verifyApiKey() {
-        if (!this.providers.find(p => p.id === this.currentProvider && p.isCustom)) { this.showToast('请先添加自定义提供商'); return; }
-        const btn = document.getElementById('verifyApiKeyBtn');
-        btn.classList.add('loading'); btn.disabled = true;
-        try {
-            const response = await this.apiFetch('/api/key/verify', { method: 'POST', body: JSON.stringify({ provider: this.currentProvider }) });
-            const data = await response.json();
-            this.showToast(data.valid ? '验证成功！' : (data.error || '密钥无效'));
-        } catch { this.showToast('验证失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
-    }
-
-    async deleteApiKey() {
-        const pi = this.providers.find(p => p.id === this.currentProvider);
-        if (!confirm(`确定删除${pi ? pi.name : ''}API密钥吗？`)) return;
-        try {
-            const response = await this.apiFetch('/api/key', { method: 'DELETE', body: JSON.stringify({ provider: this.currentProvider }) });
-            const data = await response.json();
-            if (data.success) { this.showToast('密钥已删除'); this.checkApiKeyStatus(); }
-            else { this.showToast(data.error || '删除失败'); }
-        } catch { this.showToast('删除失败'); }
-    }
 
     async saveApiKeyFromModal() {
         const input = document.getElementById('modalApiKeyInput');
@@ -2669,7 +3002,27 @@ class AIReadingAssistant {
         } catch { this.showToast('配置失败'); } finally { btn.classList.remove('loading'); btn.disabled = false; }
     }
 
-    showModal() { this.apiKeyModal.classList.add('visible'); document.getElementById('modalApiKeyInput').focus(); }
+    showModal() {
+        const customs = this.providers.filter(p => p.isCustom);
+        const hint = document.getElementById('modalHint');
+        const keyGroup = document.getElementById('modalKeyGroup');
+        const setupBtn = document.getElementById('modalSetupBtn');
+        const saveBtn = document.getElementById('modalSaveBtn');
+        if (customs.length) {
+            const p = customs.find(x => x.id === this.currentProvider) || customs[0];
+            hint.textContent = `「${p.name}」尚未配置 API 密钥，配置后即可使用 AI 功能。`;
+            keyGroup.style.display = '';
+            setupBtn.style.display = 'none';
+            saveBtn.style.display = '';
+        } else {
+            hint.textContent = '还没有模型提供商。先添加一个 OpenAI 兼容端点（Base URL + 密钥 + 模型），即可开始 AI 问答。';
+            keyGroup.style.display = 'none';
+            setupBtn.style.display = '';
+            saveBtn.style.display = 'none';
+        }
+        this.apiKeyModal.classList.add('visible');
+        if (customs.length) document.getElementById('modalApiKeyInput').focus();
+    }
     hideModal() { this.apiKeyModal.classList.remove('visible'); document.getElementById('modalApiKeyInput').value = ''; }
 
     // ==================== History ====================
@@ -2755,6 +3108,8 @@ class AIReadingAssistant {
             this.closeAIPanel();
             this.hideFloatingToolbar();
             this.hideModal();
+            this.closeProviderModal();
+            this.closeNotesModal();
             this.closeTocDrawer();
             if (this.isReading && this.toolbarsVisible) this.hideToolbars();
         }

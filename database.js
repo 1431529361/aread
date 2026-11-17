@@ -209,6 +209,20 @@ async function initDB() {
             UNIQUE(user_id, book_id, task_type)
         );
 
+        -- 章节摘要缓存（读书笔记 map 层）：按 书+内容hash+模型+章序 复用，重新生成只重跑整合
+        CREATE TABLE IF NOT EXISTS chapter_summaries (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            book_id TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            model TEXT NOT NULL,
+            chapter_index INTEGER NOT NULL,
+            chapter_title TEXT,
+            summary TEXT NOT NULL,
+            quotes TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, book_id, content_hash, model, chapter_index)
+        );
+
         -- ==================== RAG 相关表 ====================
 
         -- 用户设置表（通用 KV，如 embedding_provider）
