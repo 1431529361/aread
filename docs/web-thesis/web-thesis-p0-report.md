@@ -1,6 +1,6 @@
 # P0 阶段完成报告：实验基线与开题演示底线
 
-日期：2026-11-14。分支：`qoder/web-thesis`。关联：[P0方案](web-thesis-p0-plan.md)、[总方案](web-thesis-plan.md)、[测试计划](baseline/test-plan.md)、[浏览器冒烟](baseline/browser-smoke.md)。
+日期：2026-11-14。分支：`qoder/web-thesis`。关联：[P0方案](web-thesis-p0-plan.md)、[总方案](web-thesis-plan.md)、[测试计划](../baseline/test-plan.md)、[浏览器冒烟](../baseline/browser-smoke.md)。
 
 状态：**P0 工程关卡 P0-01~10 全部通过；在线开发集初测（P0-07）已完成。** 未提交、未推送（按方案约束）。
 
