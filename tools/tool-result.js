@@ -1,8 +1,9 @@
 /**
- * 统一工具结果契约（P1a A2，SC-1.1 §6.3）
+ * 统一工具结果契约（P1a A2 / P1b R2b，SC-1.1 §6.3）
  * ToolResult = { status, candidates, data, diagnostics, truncated, error }
- * 原文放 candidates；data 仅承载工具专有元信息。P1a 候选 locator 可为 null（P1b 补定位）。
+ * 原文放 candidates；data 仅承载工具专有元信息。截短正文必须同步改 locator.end。
  */
+const TU = require('../text-utils');
 
 function candidate({ bookId, chapter, text, method, rank = null, score = null, locator = null, contentHash = null, chunkId = null }) {
     return { bookId, contentHash, chunkId, chapter: chapter ?? null, text, locator, method, rank, score };
@@ -24,7 +25,7 @@ function error(code, message) {
     return { status: 'error', candidates: [], data: null, diagnostics: {}, truncated: false, error: { code, message, retryable: false } };
 }
 
-/** 按文本预算裁剪候选正文，截断后仍合法；返回 { candidates, truncated } */
+/** 按文本预算裁剪候选正文，截断后仍合法；locator.end 同步收缩且不切代理对 */
 function truncateCandidates(candidates, maxCharsPerItem = 600, maxItems = 10) {
     let truncated = false;
     const items = candidates.slice(0, maxItems);
@@ -32,7 +33,10 @@ function truncateCandidates(candidates, maxCharsPerItem = 600, maxItems = 10) {
     const out = items.map(c => {
         if (typeof c.text === 'string' && c.text.length > maxCharsPerItem) {
             truncated = true;
-            return { ...c, text: c.text.slice(0, maxCharsPerItem) };
+            const safe = TU.sliceAtSafeBoundary(c.text, 0, maxCharsPerItem);
+            const next = { ...c, text: safe.text };
+            if (c.locator) next.locator = { ...c.locator, end: c.locator.start + safe.end };
+            return next;
         }
         return c;
     });

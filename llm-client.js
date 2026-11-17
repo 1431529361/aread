@@ -84,6 +84,7 @@ async function chat(ctx, {
             const msg = choice.message || {};
             return {
                 content: msg.content || '',
+                reasoning: msg.reasoning_content || '',
                 toolCalls: normalizeToolCalls(msg.tool_calls),
                 finishReason: choice.finish_reason || null,
                 usage: normalizeUsage(data.usage),
@@ -119,7 +120,7 @@ async function complete(ctx, promptOrMessages, { maxTokens = 800, temperature = 
  */
 async function stream(ctx, {
     messages, tools = null, toolChoice = 'auto', temperature = 0.4, maxTokens = 2000,
-    timeoutMs = 90000, onStart = null, onChunk = null, signal = null, deadlineAt = null
+    timeoutMs = 90000, onStart = null, onChunk = null, onReasoning = null, signal = null, deadlineAt = null
 } = {}) {
     const { endpoint, model } = resolveTarget(ctx);
     const body = { model, messages, temperature, max_tokens: maxTokens, stream: true };
@@ -130,6 +131,7 @@ async function stream(ctx, {
     const timeout = setTimeout(() => controller.abort(), effectiveTimeout(timeoutMs, deadlineAt));
 
     let fullContent = '';
+    let fullReasoning = '';
     let finishReason = null;
     let usage = { kind: 'unavailable' };
     let sawDone = false;
@@ -156,6 +158,7 @@ async function stream(ctx, {
             if (!choice) return;
             if (choice.finish_reason) finishReason = choice.finish_reason;
             const delta = choice.delta || {};
+            if (delta.reasoning_content) { fullReasoning += delta.reasoning_content; onReasoning && onReasoning(delta.reasoning_content); }
             if (delta.content) { fullContent += delta.content; onChunk && onChunk(delta.content); }
             if (Array.isArray(delta.tool_calls)) {
                 for (const tc of delta.tool_calls) {
@@ -183,7 +186,7 @@ async function stream(ctx, {
 
         const toolCalls = [...toolAcc.values()].filter(t => t.name).map(t => ({ id: t.id, name: t.name, arguments: t.arguments }));
         const interrupted = !sawDone && !finishReason;
-        return { content: fullContent, toolCalls, finishReason, usage, interrupted };
+        return { content: fullContent, reasoning: fullReasoning, toolCalls, finishReason, usage, interrupted };
     } catch (e) {
         if (signal && signal.aborted) { e.name = 'AbortError'; }
         // 已产生部分正文时向上抛出带部分内容的错误，供上层标中断状态

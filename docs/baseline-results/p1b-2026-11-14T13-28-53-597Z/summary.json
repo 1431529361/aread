@@ -1,0 +1,41 @@
+{
+  "runId": "p1b-2026-11-14T13-28-53-597Z",
+  "model": "qwen3.8-flash",
+  "rerank": false,
+  "total": 2,
+  "errors": 0,
+  "insufficient": 0,
+  "noEvidenceAnswer": 0,
+  "evWithLocator": 10,
+  "coordValid": 10,
+  "citedTotal": 7,
+  "citedLegal": 7,
+  "invalidCitWarn": 0,
+  "hit": 2,
+  "recall": 2,
+  "mrr": 1.5,
+  "answerable": 2,
+  "toolCallsSum": 3,
+  "firstAnswer": [
+    17727.927900000002,
+    11112.611500000006
+  ],
+  "totalMs": [
+    19289.5089,
+    12198.992600000005
+  ],
+  "needsEvidenceTotal": 2,
+  "needsEvidenceNoTool": 0,
+  "coordAccuracy": 1,
+  "citationLegality": 1,
+  "hitAt5": 1,
+  "evidenceRecallAt5": 1,
+  "mrrAt5": 0.75,
+  "noEvidenceAnswerRate": 0,
+  "missedRetrievalRate": 0,
+  "avgToolCalls": 1.5,
+  "firstAnswerP50": 17728,
+  "firstAnswerP95": 17728,
+  "totalP50": 19290,
+  "finishedAt": "2026-11-14T13:30:01.104Z"
+}

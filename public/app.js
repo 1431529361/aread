@@ -5,7 +5,7 @@ class AIReadingAssistant {
         this.currentFontSize = parseInt(localStorage.getItem('fontSize')) || 18;
         this.currentTheme = localStorage.getItem('theme') || 'light';
         this.apiProviders = {};
-        this.currentProvider = localStorage.getItem('selectedProvider') || 'zhipu';
+        this.currentProvider = localStorage.getItem('selectedProvider') || 'custom';
         this.currentModel = localStorage.getItem(`selectedModel_${this.currentProvider}`) || null;
         this.books = [];
         this.providers = [];
@@ -231,6 +231,8 @@ class AIReadingAssistant {
         if (memoryMask) memoryMask.addEventListener('click', () => this.closeMemoryModal());
         const memoryClearAll = document.getElementById('memoryClearAllBtn');
         if (memoryClearAll) memoryClearAll.addEventListener('click', () => this.clearAllMemories());
+        const memoryToggle = document.getElementById('memoryEnabledToggle');
+        if (memoryToggle) memoryToggle.addEventListener('change', () => this.toggleMemoryEnabled(memoryToggle.checked));
 
         // Agent task modal
         const taskCloseBtn = document.getElementById('agentTaskCloseBtn');
@@ -435,8 +437,8 @@ class AIReadingAssistant {
             const data = await response.json();
             if (!response.ok) { this.showToast(data.error || '打开失败'); return; }
             const book = data.book;
-            if (book.format.toLowerCase() === 'txt' && data.content) {
-                this.enterReadingMode(book, data.content);
+            if (book.format.toLowerCase() === 'txt' && data.content != null) {
+                this.enterReadingMode(book, data.content, data.contentHash || null, data.chapters || []);
             } else {
                 this.showToast('该格式暂不支持在线阅读');
             }
@@ -459,10 +461,14 @@ class AIReadingAssistant {
 
     // ==================== Reading Mode ====================
 
-    enterReadingMode(book, content) {
+    enterReadingMode(book, content, contentHash = null, chapters = []) {
         this.currentBook = book;
         this.isReading = true;
         this.currentBookContent = content;
+        this.currentBookHash = contentHash;
+        this.currentChapters = chapters;
+        this._readerMap = [];
+        this._highlightedBlocks = [];
 
         // Reset conversation state on book switch (per-book session isolation)
         this.currentConversationId = null;
@@ -474,9 +480,9 @@ class AIReadingAssistant {
         // Set title
         document.getElementById('readingBookTitle').textContent = book.title;
 
-        // Format and display content
+        // Format and display content (规范文本 + 偏移映射)
         const article = document.getElementById('readingArticle');
-        article.innerHTML = this.formatTextContent(content);
+        this.renderReadingContent(article, content, chapters);
         article.style.fontSize = `${this.currentFontSize}px`;
 
         // Update TOC
@@ -627,33 +633,89 @@ class AIReadingAssistant {
         panel.classList.toggle('open');
     }
 
-    // ==================== Content Formatting ====================
+    // ==================== Content Formatting (规范文本 + 偏移映射) ====================
 
-    formatTextContent(content) {
-        const paragraphs = content.split(/\n+/).filter(p => p.trim());
-        let html = '', sectionCount = 0, inSection = false;
-        paragraphs.forEach(para => {
-            para = para.trim();
-            if (!para) return;
-            const headingMatch = para.match(/^(第[一二三四五六七八九十零百千万]+[章节回部篇集]|[第\d]+[章节回部篇集集]|[一二三四五六七八九十零]+[、.]|[\d]+[、.]|Chapter\s*\d+|CHAPTER\s*\d+)/i);
-            if (headingMatch) {
-                if (inSection) html += '</section>';
-                sectionCount++;
-                html += `<section id="section${sectionCount}" class="content-section"><h2>${this.escapeHtml(para)}</h2>`;
-                inSection = true;
-            } else if (para.length < 50 && !/[。，！？；：]/.test(para)) {
-                html += `<h3>${this.escapeHtml(para)}</h3>`;
+    /**
+     * 按服务端章节渲染规范文本：每个渲染块保留 data-start/end，块内用 createTextNode，
+     * white-space:pre-wrap 保留换行与空白；建立 TextNode→规范偏移映射供选文与引用跳转。
+     */
+    renderReadingContent(article, content, chapters) {
+        article.innerHTML = '';
+        this._readerMap = [];
+        const chs = (chapters && chapters.length) ? chapters : [{ id: 'ch-1-0', ordinal: 1, title: '全文', start: 0, end: content.length }];
+        chs.forEach((ch, i) => {
+            const section = document.createElement('section');
+            section.className = 'content-section';
+            section.id = `section${i + 1}`;
+            section.dataset.chapterId = ch.id;
+            // 判断章节首行是否为真实标题行（合成标签“前言/全文”不作为原文标题）
+            const firstNl = content.indexOf('\n', ch.start);
+            const firstLineEnd = (firstNl === -1 || firstNl > ch.end) ? ch.end : firstNl;
+            const firstLine = content.slice(ch.start, firstLineEnd);
+            const isRealTitle = firstLine.trim() === ch.title && ch.title !== '前言' && ch.title !== '全文';
+            let bodyStart = ch.start;
+            const h2 = document.createElement('h2');
+            if (isRealTitle) {
+                h2.className = 'reader-block reader-title';
+                h2.dataset.start = ch.start;
+                h2.dataset.end = firstLineEnd;
+                const tn = document.createTextNode(firstLine);
+                h2.appendChild(tn);
+                this._readerMap.push({ node: tn, start: ch.start, end: firstLineEnd, block: h2 });
+                bodyStart = Math.min(firstLineEnd + 1, ch.end);
             } else {
-                html += `<p>${this.escapeHtml(para)}</p>`;
+                h2.className = 'reader-title reader-title-synthetic';
+                h2.textContent = ch.title; // 结构标签，不参与偏移映射
             }
+            section.appendChild(h2);
+            if (bodyStart < ch.end) {
+                const p = document.createElement('p');
+                p.className = 'reader-block reader-body';
+                p.dataset.start = bodyStart;
+                p.dataset.end = ch.end;
+                const tn = document.createTextNode(content.slice(bodyStart, ch.end));
+                p.appendChild(tn);
+                this._readerMap.push({ node: tn, start: bodyStart, end: ch.end, block: p });
+                section.appendChild(p);
+            }
+            article.appendChild(section);
         });
-        if (inSection) html += '</section>';
-        if (sectionCount === 0) {
-            html = '<section id="section1" class="content-section">';
-            paragraphs.forEach(p => { if (p.trim()) html += `<p>${this.escapeHtml(p.trim())}</p>`; });
-            html += '</section>';
+    }
+
+    /** 由 DOM 节点+偏移计算规范文本全局偏移；无法映射返回 null */
+    _globalOffset(container, offset) {
+        if (!container) return null;
+        if (container.nodeType === 3) {
+            const entry = this._readerMap.find(m => m.node === container);
+            if (!entry) return null;
+            return entry.start + Math.min(offset, entry.end - entry.start);
         }
-        return html;
+        // 元素节点：定位到对应子文本节点
+        const children = container.childNodes;
+        if (offset < children.length) {
+            let n = children[offset];
+            while (n && n.nodeType !== 3 && n.firstChild) n = n.firstChild;
+            if (n && n.nodeType === 3) return this._globalOffset(n, 0);
+        } else if (children.length) {
+            let n = children[children.length - 1];
+            while (n && n.nodeType !== 3 && n.lastChild) n = n.lastChild;
+            if (n && n.nodeType === 3) return this._globalOffset(n, n.length);
+        }
+        return null;
+    }
+
+    /** 从当前选区计算规范 locator；跨出正文或无法映射时返回 null */
+    computeSelectionLocator() {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !this.currentBookContent) return null;
+        const range = selection.getRangeAt(0);
+        const article = document.getElementById('readingArticle');
+        if (!article.contains(range.startContainer) || !article.contains(range.endContainer)) return null;
+        const s = this._globalOffset(range.startContainer, range.startOffset);
+        const e = this._globalOffset(range.endContainer, range.endOffset);
+        if (s == null || e == null || s >= e) return null;
+        const start = Math.min(s, e), end = Math.max(s, e);
+        return { contentHash: this.currentBookHash, start, end, text: this.currentBookContent.slice(start, end) };
     }
 
     // ==================== Font & Theme ====================
@@ -719,6 +781,7 @@ class AIReadingAssistant {
 
     clearComposerContext() {
         this.selectedText = '';
+        this.selectedLocator = null;
         const box = document.getElementById('selectedTextBox');
         if (box) box.style.display = 'none';
     }
@@ -789,29 +852,74 @@ class AIReadingAssistant {
         body.className = 'msg-body';
         const header = document.createElement('span');
         header.className = 'msg-model-tag';
+        const thinking = document.createElement('div');
+        thinking.className = 'msg-thinking';
+        const thinkingToggle = document.createElement('button');
+        thinkingToggle.type = 'button';
+        thinkingToggle.className = 'thinking-toggle';
+        thinkingToggle.innerHTML = '💭 <span class="thinking-label">思考过程</span><span class="thinking-chevron">▸</span>';
+        const thinkingBody = document.createElement('div');
+        thinkingBody.className = 'thinking-body';
+        thinkingBody.hidden = true;
+        thinkingToggle.addEventListener('click', () => {
+            thinkingBody.hidden = !thinkingBody.hidden;
+            thinkingToggle.querySelector('.thinking-chevron').textContent = thinkingBody.hidden ? '▸' : '▾';
+        });
+        thinking.appendChild(thinkingToggle);
+        thinking.appendChild(thinkingBody);
         const trace = document.createElement('div');
         trace.className = 'msg-trace';
+        const evidenceBox = document.createElement('div');
+        evidenceBox.className = 'msg-evidence';
+        const memoryBox = document.createElement('div');
+        memoryBox.className = 'msg-memory';
         const answer = document.createElement('div');
         answer.className = 'answer-content';
         answer.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
         body.appendChild(header);
+        body.appendChild(thinking);
         body.appendChild(trace);
+        body.appendChild(evidenceBox);
+        body.appendChild(memoryBox);
         body.appendChild(answer);
         row.appendChild(avatar);
         row.appendChild(body);
         this.chatMessages.appendChild(row);
         this.scrollChatToBottom();
-        return { row, headerEl: header, traceEl: trace, answerEl: answer };
+        return { row, headerEl: header, thinkingEl: thinking, thinkingBodyEl: thinkingBody, thinkingLabelEl: thinkingToggle.querySelector('.thinking-label'), traceEl: trace, evidenceEl: evidenceBox, memoryEl: memoryBox, answerEl: answer };
     }
 
-    renderStaticMessage(role, content) {
-        if (role === 'user') { this.appendUserMessage(content, null); return; }
+    appendThinking(msg, text) {
+        msg.thinkingEl.classList.add('show');
+        msg.thinkingBodyEl.textContent += text;
+        msg.thinkingLabelEl.textContent = '思考中…';
+    }
+
+    finalizeThinking(msg) {
+        if (msg.thinkingEl.classList.contains('show')) msg.thinkingLabelEl.textContent = '思考过程';
+    }
+
+    renderStaticMessage(role, content, metadata = null, memoryMap = null) {
+        if (role === 'user') {
+            const quoted = metadata && metadata.selection && metadata.selection.text ? metadata.selection.text : null;
+            this.appendUserMessage(content, quoted);
+            return;
+        }
         this.hideChatEmpty();
-        const row = document.createElement('div');
-        row.className = 'chat-msg chat-msg-ai';
-        row.innerHTML = '<div class="msg-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg></div><div class="msg-body"><div class="answer-content"></div></div>';
-        this.renderTextInto(row.querySelector('.answer-content'), content);
-        this.chatMessages.appendChild(row);
+        const msg = this.createAIMessage();
+        msg.answerEl.innerHTML = '';
+        let emap = {};
+        if (metadata && Array.isArray(metadata.evidence)) emap = this.renderEvidenceCards(msg.evidenceEl, metadata.evidence);
+        if (metadata && Array.isArray(metadata.memoryRefs) && metadata.memoryRefs.length) {
+            this.renderMemoryRefs(msg.memoryEl, metadata.memoryRefs, memoryMap);
+        }
+        this.renderAnswerWithCitations(msg.answerEl, content, emap, true);
+        if (metadata && metadata.reasoning) {
+            msg.thinkingBodyEl.textContent = metadata.reasoning;
+            msg.thinkingEl.classList.add('show');
+        }
+        if (metadata && metadata.answerKind === 'insufficient_evidence') this.appendTraceItem(msg.traceEl, 'fallback', '⚠️ 证据不足，不凭印象作答');
+        if (metadata && metadata.answerKind === 'task_result') this.appendTraceItem(msg.traceEl, 'status', '📋 长任务结果（采样分析）');
     }
 
     async loadChatHistory() {
@@ -827,7 +935,14 @@ class AIReadingAssistant {
                 this.updateSessionInfo(data.conversation.tokenEstimate, data.conversation.contextLimit);
             }
             if (!msgs.length) { this.showChatEmpty(); }
-            else { msgs.forEach(m => this.renderStaticMessage(m.role, m.content)); }
+            else {
+                // 历史 MemoryRef 只存 ID/版本：重开时查当前记忆，已删/已更新如实显示，不还原旧正文
+                let memoryMap = null;
+                if (msgs.some(m => m.metadata && Array.isArray(m.metadata.memoryRefs) && m.metadata.memoryRefs.length)) {
+                    memoryMap = await this.fetchMemoryMap();
+                }
+                msgs.forEach(m => this.renderStaticMessage(m.role, m.content, m.metadata, memoryMap));
+            }
             this._chatLoadedConvId = convId;
             this.scrollChatToBottom();
         } catch { this.showChatEmpty(); }
@@ -840,9 +955,17 @@ class AIReadingAssistant {
         if (this.floatingToolbar.contains(e.target) || document.getElementById('aiChatView').contains(e.target)) return;
         setTimeout(() => {
             const selection = window.getSelection();
-            const text = selection.toString().trim();
-            if (text.length > 0 && this.isReading) {
-                this.selectedText = text;
+            const rawText = selection ? selection.toString().trim() : '';
+            if (rawText.length > 0 && this.isReading) {
+                const loc = this.computeSelectionLocator();
+                if (loc && loc.text.trim()) {
+                    // 可映射：用规范 content.slice 作为选文（不依赖 Range.toString 的布局换行）
+                    this.selectedText = loc.text;
+                    this.selectedLocator = { contentHash: loc.contentHash, start: loc.start, end: loc.end };
+                } else {
+                    this.selectedText = rawText;
+                    this.selectedLocator = null;
+                }
                 this.showFloatingToolbar(selection);
             } else {
                 this.hideFloatingToolbar();
@@ -914,7 +1037,14 @@ class AIReadingAssistant {
     }
 
     async askAI(question, action = 'ask') {
+        if (!this.providers || !this.providers.some(p => p.isCustom)) {
+            this.appendUserMessage(question, this.selectedText || '');
+            const msg = this.createAIMessage();
+            msg.answerEl.innerHTML = '<p style="color:#ef4444;">请先在设置中添加一个自定义 AI 服务提供商（OpenAI 兼容端点）。</p>';
+            return;
+        }
         const quoted = this.selectedText || '';
+        const quotedLocator = this.selectedLocator || null;
         const requestId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
         this.setAsking(true);
         this.appendUserMessage(question, quoted);
@@ -922,19 +1052,14 @@ class AIReadingAssistant {
         this.questionInput.value = '';
         this.autoGrowInput();
         const msg = this.createAIMessage();
-        const answerEl = msg.answerEl, traceEl = msg.traceEl, headerEl = msg.headerEl;
+        const answerEl = msg.answerEl, traceEl = msg.traceEl, headerEl = msg.headerEl, evidenceEl = msg.evidenceEl;
         this._abortController = new AbortController();
         this._currentRequestId = requestId;
 
-        let fullContent = '', pendingChunk = '', rafId = null, started = false, ended = false;
+        let fullContent = '', rafId = null, started = false, ended = false;
+        let evidenceMap = {};
         const flushChunk = () => {
-            if (!pendingChunk) return;
-            const text = pendingChunk; pendingChunk = '';
-            const parts = text.split('\n');
-            parts.forEach((part, i) => {
-                if (part) answerEl.appendChild(document.createTextNode(part));
-                if (i < parts.length - 1) answerEl.appendChild(document.createElement('br'));
-            });
+            this.renderAnswerWithCitations(answerEl, fullContent, evidenceMap, false);
             this.scrollChatToBottom();
         };
 
@@ -950,6 +1075,16 @@ class AIReadingAssistant {
                 case 'status':
                     this.appendTraceItem(traceEl, 'status', `⏳ ${d.label || d.phase || ''}`);
                     break;
+                case 'reasoning_chunk':
+                    this.appendThinking(msg, d.content || '');
+                    this.scrollChatToBottom();
+                    break;
+                case 'answer_retract':
+                    // 暂定正文被收回（本轮以工具调用结束/改走证据型答案）：归入思考展示
+                    if (fullContent) this.appendThinking(msg, (msg.thinkingBodyEl.textContent ? '\n' : '') + fullContent);
+                    fullContent = '';
+                    answerEl.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
+                    break;
                 case 'tool_call':
                     this.appendTraceItem(traceEl, 'tool_call', `🔧 调用工具：${d.name}(${JSON.stringify(d.args)})`);
                     break;
@@ -960,7 +1095,10 @@ class AIReadingAssistant {
                     break;
                 }
                 case 'evidence':
-                    this.renderEvidence(traceEl, d.items || []);
+                    evidenceMap = this.renderEvidenceCards(evidenceEl, d.items || []);
+                    break;
+                case 'memory_context':
+                    this.renderMemoryRefs(msg.memoryEl, d.refs || [], null, d.items || []);
                     break;
                 case 'warning':
                     this.appendTraceItem(traceEl, 'fallback', `⚠️ ${d.message || ''}`);
@@ -976,12 +1114,30 @@ class AIReadingAssistant {
                 case 'chunk':
                     if (!started) { answerEl.innerHTML = ''; started = true; }
                     fullContent += d.content || '';
-                    pendingChunk += d.content || '';
                     if (!rafId) rafId = requestAnimationFrame(() => { rafId = null; flushChunk(); });
                     break;
                 case 'end':
                     ended = true;
-                    if (d.status !== 'completed') {
+                    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+                    this.finalizeThinking(msg);
+                    if (d.status === 'completed' && d.assistantMessage) {
+                        // 用服务端规范化后的终态正文校准（引用无效标记一致），并刷新证据卡片
+                        fullContent = d.assistantMessage.content != null ? d.assistantMessage.content : fullContent;
+                        const meta = d.assistantMessage.metadata;
+                        if (meta && Array.isArray(meta.evidence)) evidenceMap = this.renderEvidenceCards(evidenceEl, meta.evidence);
+                        if (meta && meta.reasoning && !msg.thinkingBodyEl.textContent) {
+                            msg.thinkingBodyEl.textContent = meta.reasoning;
+                            msg.thinkingEl.classList.add('show');
+                        }
+                        if (meta && Array.isArray(meta.memoryRefs) && meta.memoryRefs.length && !msg.memoryEl.childElementCount) {
+                            this.renderMemoryRefs(msg.memoryEl, meta.memoryRefs, null);
+                        }
+                        this.renderAnswerWithCitations(answerEl, fullContent, evidenceMap, true);
+                        // 记忆后处理真实状态：pending→轮询请求查询；不宣称"已记住"
+                        if (d.postProcessing && d.postProcessing.status === 'pending') {
+                            this.pollMemoryPostProcessing(requestId);
+                        }
+                    } else if (d.status !== 'completed') {
                         const em = (d.error && d.error.message) || d.status;
                         if (!fullContent) answerEl.innerHTML = `<p style="color:#ef4444;">${this.escapeHtml(em)}</p>`;
                         this.appendTraceItem(traceEl, 'fallback', `⚠️ 状态：${d.status}`);
@@ -996,7 +1152,7 @@ class AIReadingAssistant {
                 signal: this._abortController.signal,
                 body: JSON.stringify({
                     requestId, question, action,
-                    selection: quoted ? { text: quoted, locator: null } : null,
+                    selection: quoted ? { text: quoted, locator: quotedLocator } : null,
                     provider: this.currentProvider, model: this.currentModel,
                     bookId: this.currentBook ? this.currentBook.id : null,
                     conversationId: this.currentConversationId
@@ -1040,8 +1196,9 @@ class AIReadingAssistant {
                     if (q.ok) {
                         const qd = await q.json();
                         if (qd.assistantMessage && qd.assistantMessage.content) {
-                            answerEl.innerHTML = '';
-                            answerEl.appendChild(document.createTextNode(qd.assistantMessage.content));
+                            const meta = qd.assistantMessage.metadata;
+                            const emap = (meta && Array.isArray(meta.evidence)) ? this.renderEvidenceCards(evidenceEl, meta.evidence) : evidenceMap;
+                            this.renderAnswerWithCitations(answerEl, qd.assistantMessage.content, emap, true);
                         }
                         this.appendTraceItem(traceEl, 'fallback', `核对状态：${qd.status}`);
                     }
@@ -1070,10 +1227,189 @@ class AIReadingAssistant {
         if (this._abortController) this._abortController.abort();
     }
 
-    renderEvidence(traceEl, items) {
-        if (!items || !items.length) return;
-        const lines = items.map(e => `[${e.evidenceId}] ${e.chapter ? '(' + e.chapter + ') ' : ''}${(e.text || '').substring(0, 50)}…${e.verified ? '' : '（不可跳转）'}`).join('\n');
-        this.appendTraceItem(traceEl, 'tool_result', `📎 本轮证据 ${items.length} 条\n${lines}`);
+    _chapterTitle(ch) {
+        if (!ch) return '';
+        return typeof ch === 'string' ? ch : (ch.title || '');
+    }
+
+    /** 安全渲染回答正文：合法[[En]]→可点击引用，未知/残缺→引用无效，换行→<br>；全部 DOM 文本节点 */
+    renderAnswerWithCitations(el, text, evidenceMap, final = false) {
+        el.innerHTML = '';
+        let src = String(text || '');
+        if (final) {
+            src = src.replace(/\[\[(?!E\d+\]\])E?\d*\]?/g, '引用无效');
+        } else {
+            const m = src.match(/\[\[(?!E\d+\]\])E?\d*\]?$/);
+            if (m) src = src.slice(0, src.length - m[0].length); // 暂存尾部未闭合标记
+        }
+        const appendText = (t) => {
+            const parts = t.split('\n');
+            parts.forEach((part, i) => {
+                if (part) el.appendChild(document.createTextNode(part));
+                if (i < parts.length - 1) el.appendChild(document.createElement('br'));
+            });
+        };
+        const re = /\[\[(E\d+)\]\]/g;
+        let last = 0, m;
+        while ((m = re.exec(src)) !== null) {
+            appendText(src.slice(last, m.index));
+            const id = m[1];
+            if (evidenceMap && evidenceMap[id]) {
+                const btn = document.createElement('button');
+                btn.className = 'citation-btn';
+                btn.type = 'button';
+                btn.textContent = id;
+                btn.title = '跳转到原文';
+                btn.addEventListener('click', () => this.jumpToEvidence(evidenceMap[id]));
+                el.appendChild(btn);
+            } else {
+                const span = document.createElement('span');
+                span.className = 'citation-invalid';
+                span.textContent = '引用无效';
+                el.appendChild(span);
+            }
+            last = re.lastIndex;
+        }
+        appendText(src.slice(last));
+    }
+
+    /** 证据卡片：章节标注 + 预览 + 跳转/不可跳转；返回 evidenceId→evidence 映射 */
+    renderEvidenceCards(container, items) {
+        if (!container) return {};
+        container.innerHTML = '';
+        const map = {};
+        if (!items || !items.length) return map;
+        items.forEach(e => { map[e.evidenceId] = e; });
+        const wrap = document.createElement('div');
+        wrap.className = 'evidence-cards';
+        const title = document.createElement('div');
+        title.className = 'evidence-cards-title';
+        title.textContent = `📎 本轮证据 ${items.length} 条`;
+        wrap.appendChild(title);
+        items.forEach(e => {
+            const card = document.createElement('div');
+            card.className = 'evidence-card';
+            const head = document.createElement('div');
+            head.className = 'evidence-card-head';
+            const idTag = document.createElement('span');
+            idTag.className = 'evidence-id';
+            idTag.textContent = e.evidenceId;
+            head.appendChild(idTag);
+            const chTitle = this._chapterTitle(e.chapter);
+            if (chTitle) {
+                const ch = document.createElement('span');
+                ch.className = 'evidence-chapter';
+                ch.textContent = chTitle;
+                head.appendChild(ch);
+            }
+            if (e.verified && e.locator) {
+                const btn = document.createElement('button');
+                btn.className = 'evidence-jump-btn';
+                btn.type = 'button';
+                btn.textContent = '跳转原文';
+                btn.addEventListener('click', () => this.jumpToEvidence(e));
+                head.appendChild(btn);
+            } else {
+                const tag = document.createElement('span');
+                tag.className = 'evidence-nojump';
+                tag.textContent = '不可跳转';
+                head.appendChild(tag);
+            }
+            card.appendChild(head);
+            const preview = document.createElement('div');
+            preview.className = 'evidence-preview';
+            const t = e.text || '';
+            preview.textContent = t.substring(0, 80) + (t.length > 80 ? '…' : '');
+            card.appendChild(preview);
+            wrap.appendChild(card);
+        });
+        container.appendChild(wrap);
+        return map;
+    }
+
+    /** 点击引用跳转：复核权限/内容hash → 高亮相交块 → 滚动 → 返回对话 */
+    async jumpToEvidence(evidence) {
+        if (!evidence || !evidence.locator || !evidence.verified) { this.showToast('该引用不可跳转'); return; }
+        const loc = evidence.locator;
+        const bookId = evidence.bookId;
+        try {
+            // 每次跳转复核权限与当前内容hash（轻量元信息，不整书下载）
+            const metaResp = await this.apiFetch(`/api/books/${bookId}/content-meta`);
+            if (!metaResp.ok) { this.showToast(metaResp.status === 404 ? '来源不可用（书籍已删除或无权访问）' : '无法加载原文'); return; }
+            const meta = await metaResp.json();
+            if (meta.contentHash !== loc.contentHash) { this.showToast('原文已变化，无法准确定位'); return; }
+            // 当前已加载同书同hash → 用缓存原文；否则加载该书
+            if (!this.currentBook || this.currentBook.id !== bookId || this.currentBookHash !== meta.contentHash) {
+                const resp = await this.apiFetch(`/api/books/${bookId}`);
+                if (!resp.ok) { this.showToast('无法加载原文'); return; }
+                const data = await resp.json();
+                if (data.contentHash !== loc.contentHash) { this.showToast('原文已变化，无法准确定位'); return; }
+                this.enterReadingMode(data.book, data.content, data.contentHash, data.chapters || []);
+            }
+            this._restoreHighlight();
+            const marks = this._highlightRange(loc.start, loc.end);
+            if (!marks.length) { this.showToast('未能定位到原文片段'); return; }
+            // 全屏对话盖住阅读器时先收起，否则高亮与滚动不可见
+            if (document.getElementById('aiChatView').classList.contains('open')) this.closeAIPanel();
+            marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            this._showReturnChatBtn();
+        } catch { this.showToast('跳转失败'); }
+    }
+
+    _highlightRange(start, end) {
+        const marks = [];
+        const entries = this._readerMap.filter(m => m.start < end && m.end > start);
+        for (const entry of entries) {
+            const block = entry.block;
+            const bs = entry.start, be = entry.end;
+            const ls = Math.max(start, bs) - bs;
+            const le = Math.min(end, be) - bs;
+            const full = this.currentBookContent.slice(bs, be);
+            const before = full.slice(0, ls), mid = full.slice(ls, le), after = full.slice(le);
+            block.innerHTML = '';
+            const newEntries = [];
+            if (before) { const tn = document.createTextNode(before); block.appendChild(tn); newEntries.push({ node: tn, start: bs, end: bs + ls, block }); }
+            const mark = document.createElement('mark');
+            mark.className = 'citation-highlight';
+            const mtn = document.createTextNode(mid);
+            mark.appendChild(mtn);
+            block.appendChild(mark);
+            newEntries.push({ node: mtn, start: bs + ls, end: bs + le, block });
+            marks.push(mark);
+            if (after) { const tn = document.createTextNode(after); block.appendChild(tn); newEntries.push({ node: tn, start: bs + le, end: be, block }); }
+            this._readerMap = this._readerMap.filter(m => m !== entry);
+            this._readerMap.push(...newEntries);
+            if (!this._highlightedBlocks.includes(block)) this._highlightedBlocks.push(block);
+        }
+        return marks;
+    }
+
+    _restoreHighlight() {
+        if (!this._highlightedBlocks || !this._highlightedBlocks.length) return;
+        for (const block of this._highlightedBlocks) {
+            const bs = Number(block.dataset.start), be = Number(block.dataset.end);
+            if (!Number.isInteger(bs) || !Number.isInteger(be)) continue;
+            block.innerHTML = '';
+            const tn = document.createTextNode(this.currentBookContent.slice(bs, be));
+            block.appendChild(tn);
+            this._readerMap = this._readerMap.filter(m => m.block !== block);
+            this._readerMap.push({ node: tn, start: bs, end: be, block });
+        }
+        this._highlightedBlocks = [];
+    }
+
+    _showReturnChatBtn() {
+        let btn = document.getElementById('returnChatBtn');
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'returnChatBtn';
+            btn.className = 'return-chat-btn';
+            btn.type = 'button';
+            btn.textContent = '↩ 返回对话';
+            btn.addEventListener('click', () => { btn.classList.remove('visible'); this.openAIPanel(); });
+            document.getElementById('readingView').appendChild(btn);
+        }
+        btn.classList.add('visible');
     }
     appendTraceItem(traceEl, cls, text, iteration) {
         if (!traceEl) return;
@@ -1172,11 +1508,13 @@ class AIReadingAssistant {
         finally { if (btn) { btn.disabled = false; btn.textContent = '🗜️ 压缩'; } }
     }
 
-    // ==================== Memory Management ====================
+    // ==================== Memory Management (P2 治理 UI) ====================
 
     async openMemoryModal() {
         const modal = document.getElementById('memoryModal');
         if (modal) modal.style.display = 'flex';
+        this.memoryError('');
+        await this.loadMemorySettings();
         await this.loadMemories();
     }
 
@@ -1185,13 +1523,35 @@ class AIReadingAssistant {
         if (modal) modal.style.display = 'none';
     }
 
+    memoryError(msg) {
+        const el = document.getElementById('memoryError');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.style.display = msg ? 'block' : 'none';
+    }
+
+    async loadMemorySettings() {
+        try {
+            const res = await this.apiFetch('/api/memory-settings');
+            const data = await res.json();
+            this._memoryEpoch = data.epoch;
+            const toggle = document.getElementById('memoryEnabledToggle');
+            if (toggle) toggle.checked = !!data.enabled;
+            const banner = document.getElementById('memoryPausedBanner');
+            if (banner) banner.style.display = data.enabled ? 'none' : 'block';
+        } catch { this.memoryError('记忆设置加载失败'); }
+    }
+
     async loadMemories() {
         const listEl = document.getElementById('memoryList');
         if (listEl) listEl.innerHTML = '<p class="memory-empty">加载中...</p>';
         try {
             const response = await this.apiFetch('/api/memories');
+            if (!response.ok) throw new Error();
             const data = await response.json();
-            this.renderMemories(data.memories || []);
+            this._memoryEpoch = data.epoch;
+            this._memories = data.memories || [];
+            this.renderMemories(this._memories);
         } catch {
             if (listEl) listEl.innerHTML = '<p class="memory-empty">加载失败</p>';
         }
@@ -1200,45 +1560,377 @@ class AIReadingAssistant {
     renderMemories(memories) {
         const listEl = document.getElementById('memoryList');
         if (!listEl) return;
+        const legacyBanner = document.getElementById('memoryLegacyBanner');
+        const hasLegacy = memories.some(m => m.source && m.source.type === 'legacy' && m.status === 'candidate');
+        if (legacyBanner) legacyBanner.style.display = hasLegacy ? 'block' : 'none';
         if (!memories.length) {
-            listEl.innerHTML = '<p class="memory-empty">还没有记忆。多和 AI 聊聊，它会记住你的偏好与兴趣。</p>';
+            listEl.innerHTML = '<p class="memory-empty">还没有记忆。系统只从你本人的表达中保存有来源的信息；明确稳定的陈述会自动保存并提示，不确定的会先请你确认。</p>';
             return;
         }
-        // kind 仅允许固定枚举映射样式与文案；未知/历史非法 kind 安全降级为“事实”，
-        // 不将模型返回的任意字符串拼入 class 或 HTML
-        const kindMeta = { preference: '偏好', fact: '事实', interest: '兴趣' };
-        listEl.innerHTML = memories.map(m => {
-            const safeKind = Object.prototype.hasOwnProperty.call(kindMeta, m.kind) ? m.kind : 'fact';
-            return `
-            <div class="memory-item" data-id="${m.id}">
+        const actives = memories.filter(m => m.status === 'active');
+        const candidates = memories.filter(m => m.status === 'candidate');
+        const userPrefs = actives.filter(m => m.scope === 'user');
+        const bookItems = actives.filter(m => m.scope === 'book');
+        const archived = memories.filter(m => ['completed', 'expired', 'superseded'].includes(m.status));
+        const conflictFor = (c) => actives.find(a => a.key === c.key && a.scope === c.scope && (a.bookId || null) === (c.bookId || null) && a.id !== c.id);
+        let html = '';
+        if (candidates.length) {
+            html += '<div class="memory-section-title">待确认</div>';
+            html += candidates.map(m => this.memoryItemHtml(m, { conflictActive: conflictFor(m) })).join('');
+        }
+        if (userPrefs.length) {
+            html += '<div class="memory-section-title">用户偏好（跨书共享）</div>';
+            html += userPrefs.map(m => this.memoryItemHtml(m, {})).join('');
+        }
+        if (bookItems.length) {
+            html += '<div class="memory-section-title">本书目标 / 未解问题</div>';
+            html += bookItems.map(m => this.memoryItemHtml(m, {})).join('');
+        }
+        if (archived.length) {
+            html += `<details class="memory-archived"><summary>归档（已完成/已过期/已替代 ${archived.length}）</summary>`;
+            html += archived.map(m => this.memoryItemHtml(m, {})).join('');
+            html += '</details>';
+        }
+        listEl.innerHTML = html;
+        this.bindMemoryActions(listEl);
+    }
+
+    memoryItemHtml(m, { conflictActive }) {
+        const kindMeta = { preference: '偏好', fact: '事实', interest: '兴趣', reading_goal: '阅读目标', open_question: '未解问题' };
+        const statusMeta = { candidate: '待确认', active: '生效中', superseded: '已替代', expired: '已过期', completed: '已完成' };
+        const sourceMeta = { user_message: '用户原话', user_edit: '手动编辑', user_confirmation: '用户确认', legacy: '历史记忆' };
+        const safeKind = Object.prototype.hasOwnProperty.call(kindMeta, m.kind) ? m.kind : 'fact';
+        const isLegacy = m.source && m.source.type === 'legacy';
+        const bookTitle = m.bookId ? ((this.books.find(b => b.id === m.bookId) || {}).title || m.bookId) : '';
+        const updated = (m.updatedAt || '').slice(0, 10);
+        const expires = m.expiresAt ? ` · 有效至 ${m.expiresAt.slice(0, 10)}` : '';
+        let actions = '';
+        if (m.status === 'candidate') {
+            actions = `<button class="mem-btn mem-btn-primary" data-action="confirm" data-id="${m.id}">${isLegacy ? '分类确认' : '确认'}</button>`;
+        } else if (m.status === 'active') {
+            if (m.kind === 'reading_goal' || m.kind === 'open_question') {
+                actions += `<button class="mem-btn" data-action="complete" data-id="${m.id}">完成</button>`;
+            }
+        }
+        if (m.status === 'candidate' || m.status === 'active') {
+            actions += `<button class="mem-btn" data-action="edit" data-id="${m.id}">编辑</button>`;
+        }
+        if (m.source && m.source.messageId) {
+            actions += `<button class="mem-btn" data-action="source" data-id="${m.id}">来源</button>`;
+        }
+        actions += `<button class="mem-btn mem-btn-danger" data-action="delete" data-id="${m.id}">删除</button>`;
+        const conflict = conflictActive ? `
+            <div class="memory-conflict">
+                <div class="memory-conflict-row"><span class="memory-conflict-label">当前值</span>${this.escapeHtml(conflictActive.content)}</div>
+                <div class="memory-conflict-row"><span class="memory-conflict-label">候选值</span>${this.escapeHtml(m.content)}</div>
+                <div class="memory-conflict-actions">
+                    <button class="mem-btn" data-action="keep-current" data-id="${m.id}">保留当前</button>
+                    <button class="mem-btn mem-btn-primary" data-action="confirm" data-id="${m.id}">确认新值</button>
+                </div>
+            </div>` : '';
+        return `
+        <div class="memory-item memory-status-${m.status}" data-id="${m.id}">
+            <div class="memory-item-head">
                 <span class="memory-kind memory-kind-${safeKind}">${kindMeta[safeKind]}</span>
-                <span class="memory-content">${this.escapeHtml(m.content)}</span>
-                <button class="memory-delete-btn" data-id="${m.id}" title="删除这条记忆">×</button>
+                <span class="memory-status">${statusMeta[m.status] || m.status}${isLegacy && m.status === 'candidate' ? ' · 待分类' : ''}</span>
+                ${m.scope === 'book' ? `<span class="memory-book">📖 ${this.escapeHtml(bookTitle)}</span>` : ''}
             </div>
-        `;
-        }).join('');
-        listEl.querySelectorAll('.memory-delete-btn').forEach(btn => {
-            btn.addEventListener('click', () => this.deleteMemory(Number(btn.dataset.id)));
+            <div class="memory-content">${this.escapeHtml(m.content)}</div>
+            ${conflict}
+            <div class="memory-meta">${sourceMeta[m.source ? m.source.type : ''] || '未知来源'} · 更新 ${updated}${expires} · v${m.revision}</div>
+            <div class="memory-actions">${actions}</div>
+        </div>`;
+    }
+
+    bindMemoryActions(listEl) {
+        listEl.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = Number(btn.dataset.id);
+                const m = (this._memories || []).find(x => x.id === id);
+                if (!m) return;
+                switch (btn.dataset.action) {
+                    case 'confirm': this.confirmCandidate(m); break;
+                    case 'keep-current': this.deleteMemoryItem(m); break;
+                    case 'edit': this.editMemoryInline(m); break;
+                    case 'complete': this.completeMemoryItem(m); break;
+                    case 'delete': this.deleteMemoryItem(m); break;
+                    case 'source': this.viewMemorySource(m); break;
+                }
+            });
         });
     }
 
-    async deleteMemory(id) {
+    async memoryApi(path, method, body) {
+        const res = await this.apiFetch(path, { method, body: body !== undefined ? JSON.stringify(body) : undefined });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const err = data.error || {};
+            const e = new Error(err.message || '操作失败');
+            e.status = res.status; e.code = err.code;
+            throw e;
+        }
+        return data;
+    }
+
+    async confirmCandidate(m) {
+        if (m.source && m.source.type === 'legacy') { this.showClassificationForm(m); return; }
         try {
-            await this.apiFetch(`/api/memories/${id}`, { method: 'DELETE' });
-            const item = document.querySelector(`.memory-item[data-id="${id}"]`);
-            if (item) item.remove();
-            const listEl = document.getElementById('memoryList');
-            if (listEl && !listEl.querySelector('.memory-item')) this.renderMemories([]);
-        } catch { this.showToast('删除失败'); }
+            const data = await this.memoryApi(`/api/memories/${m.id}/confirm`, 'POST', { expectedRevision: m.revision, expectedEpoch: this._memoryEpoch });
+            this._memoryEpoch = data.epoch;
+            this.showToast('已确认记忆');
+            await this.loadMemories();
+        } catch (e) { this.memoryOpError(e); }
+    }
+
+    showClassificationForm(m) {
+        const item = document.querySelector(`.memory-item[data-id="${m.id}"]`);
+        if (!item) return;
+        const books = this.books || [];
+        item.innerHTML = `
+            <div class="memory-item-head"><span class="memory-kind memory-kind-fact">历史记忆</span><span class="memory-status">请核定分类与作用域</span></div>
+            <div class="memory-content">${this.escapeHtml(m.content)}</div>
+            <div class="memory-classify">
+                <label>类型 <select class="mem-classify-kind">
+                    <option value="preference">偏好</option><option value="fact">事实</option><option value="interest">兴趣</option>
+                    <option value="reading_goal">阅读目标</option><option value="open_question">未解问题</option>
+                </select></label>
+                <label>键 <input class="mem-classify-key" list="memKeyList" placeholder="如 preference.answer_length"></label>
+                <datalist id="memKeyList">
+                    <option value="preference.answer_length"><option value="preference.answer_format"><option value="preference.language">
+                    <option value="preference.example_style"><option value="fact.role"><option value="interest.topic:主题ID">
+                    <option value="reading_goal.primary"><option value="open_question:问题ID">
+                </datalist>
+                <label>作用域 <select class="mem-classify-scope"><option value="user">用户级</option><option value="book">书级</option></select></label>
+                <label class="mem-classify-book-label" style="display:none">书籍 <select class="mem-classify-book">${books.map(b => `<option value="${this.escapeHtml(b.id)}">${this.escapeHtml(b.title)}</option>`).join('')}</select></label>
+                <div class="memory-actions">
+                    <button class="mem-btn mem-btn-primary mem-classify-submit">确认分类</button>
+                    <button class="mem-btn mem-classify-cancel">取消</button>
+                </div>
+            </div>`;
+        const scopeSel = item.querySelector('.mem-classify-scope');
+        const kindSel = item.querySelector('.mem-classify-kind');
+        const syncScope = () => {
+            const kind = kindSel.value;
+            if (kind === 'reading_goal' || kind === 'open_question') { scopeSel.value = 'book'; scopeSel.disabled = true; }
+            else scopeSel.disabled = false;
+            item.querySelector('.mem-classify-book-label').style.display = scopeSel.value === 'book' ? 'block' : 'none';
+        };
+        kindSel.addEventListener('change', syncScope);
+        scopeSel.addEventListener('change', syncScope);
+        item.querySelector('.mem-classify-cancel').addEventListener('click', () => this.renderMemories(this._memories));
+        item.querySelector('.mem-classify-submit').addEventListener('click', async () => {
+            const classification = {
+                kind: kindSel.value,
+                key: item.querySelector('.mem-classify-key').value.trim(),
+                scope: scopeSel.value,
+                bookId: scopeSel.value === 'book' ? item.querySelector('.mem-classify-book').value : null
+            };
+            try {
+                const data = await this.memoryApi(`/api/memories/${m.id}/confirm`, 'POST', { expectedRevision: m.revision, expectedEpoch: this._memoryEpoch, classification });
+                this._memoryEpoch = data.epoch;
+                this.showToast('历史记忆已确认分类');
+                await this.loadMemories();
+            } catch (e) { this.memoryOpError(e); }
+        });
+    }
+
+    editMemoryInline(m) {
+        const item = document.querySelector(`.memory-item[data-id="${m.id}"]`);
+        if (!item) return;
+        const draft = (this._memoryDrafts && this._memoryDrafts[m.id]) || m.content;
+        item.innerHTML = `
+            <div class="memory-item-head"><span class="memory-status">编辑记忆</span></div>
+            <textarea class="mem-edit-input" rows="3">${this.escapeHtml(draft)}</textarea>
+            <div class="memory-actions">
+                <button class="mem-btn mem-btn-primary mem-edit-save">保存</button>
+                <button class="mem-btn mem-edit-cancel">取消</button>
+            </div>`;
+        const input = item.querySelector('.mem-edit-input');
+        item.querySelector('.mem-edit-cancel').addEventListener('click', () => this.renderMemories(this._memories));
+        item.querySelector('.mem-edit-save').addEventListener('click', async () => {
+            const content = input.value;
+            this._memoryDrafts = this._memoryDrafts || {};
+            this._memoryDrafts[m.id] = content;
+            try {
+                const data = await this.memoryApi(`/api/memories/${m.id}`, 'PUT', { expectedRevision: m.revision, content });
+                this._memoryEpoch = data.epoch;
+                delete this._memoryDrafts[m.id];
+                this.showToast('记忆已更新');
+                await this.loadMemories();
+            } catch (e) {
+                if (e.status === 409) {
+                    this.memoryError('版本冲突：记忆已被其他操作更新。列表已刷新，你的输入已保留，请核对后重试。');
+                    await this.loadMemories();
+                    this.editMemoryInline((this._memories || []).find(x => x.id === m.id) || m);
+                } else this.memoryOpError(e);
+            }
+        });
+    }
+
+    async completeMemoryItem(m) {
+        try {
+            const data = await this.memoryApi(`/api/memories/${m.id}/complete`, 'POST', { expectedRevision: m.revision });
+            this._memoryEpoch = data.epoch;
+            this.showToast('已标记完成');
+            await this.loadMemories();
+        } catch (e) { this.memoryOpError(e); }
+    }
+
+    async deleteMemoryItem(m) {
+        try {
+            const data = await this.memoryApi(`/api/memories/${m.id}`, 'DELETE', { expectedRevision: m.revision });
+            this._memoryEpoch = data.epoch;
+            this.showToast('已删除记忆（旧来源不会再写回）');
+            await this.loadMemories();
+        } catch (e) { this.memoryOpError(e); }
+    }
+
+    memoryOpError(e) {
+        this.memoryError(`${e.code || 'ERROR'}：${e.message}`);
+        if (e.status === 409) this.loadMemories();
+    }
+
+    async viewMemorySource(m) {
+        const listEl = document.getElementById('memoryList');
+        if (!listEl || !m.source) return;
+        const back = '<button class="mem-btn mem-source-back">← 返回列表</button>';
+        if (!m.source.conversationId || !m.source.messageId) {
+            listEl.innerHTML = `${back}<p class="memory-empty">该记忆来自${m.source.type === 'legacy' ? '历史迁移' : '手动操作'}，无对应用户原话。</p>`;
+            listEl.querySelector('.mem-source-back').addEventListener('click', () => this.renderMemories(this._memories));
+            return;
+        }
+        try {
+            const res = await this.apiFetch(`/api/conversations/${m.source.conversationId}/messages`);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            const msg = (data.messages || []).find(x => x.id === m.source.messageId);
+            if (!msg) throw new Error();
+            const text = String(msg.content || '');
+            const r = m.source.range;
+            let body;
+            if (r && r.start >= 0 && r.end <= text.length && r.start < r.end) {
+                body = this.escapeHtml(text.slice(0, r.start)) + '<mark class="memory-source-mark">' + this.escapeHtml(text.slice(r.start, r.end)) + '</mark>' + this.escapeHtml(text.slice(r.end));
+            } else {
+                body = this.escapeHtml(text);
+            }
+            listEl.innerHTML = `${back}<div class="memory-source-view"><div class="memory-meta">来源：用户原话（消息 #${m.source.messageId}）</div><div class="memory-source-text">${body}</div></div>`;
+        } catch {
+            listEl.innerHTML = `${back}<p class="memory-empty">来源不可用（会话已删除或无权访问）。记忆本身仍然有效，不伪造来源。</p>`;
+        }
+        listEl.querySelector('.mem-source-back').addEventListener('click', () => this.renderMemories(this._memories));
     }
 
     async clearAllMemories() {
-        if (!confirm('确定清空所有 AI 记忆吗？此操作不可撤销。')) return;
+        if (!confirm('确定清空所有 AI 记忆吗？将建立删除屏障，旧来源不会再写回。此操作不可撤销。')) return;
         try {
-            await this.apiFetch('/api/memories', { method: 'DELETE' });
-            this.renderMemories([]);
+            const data = await this.memoryApi('/api/memories', 'DELETE', { expectedEpoch: this._memoryEpoch });
+            this._memoryEpoch = data.epoch;
             this.showToast('已清空所有记忆');
-        } catch { this.showToast('清空失败'); }
+            await this.loadMemories();
+        } catch (e) { this.memoryOpError(e); }
+    }
+
+    async toggleMemoryEnabled(enabled) {
+        try {
+            const data = await this.memoryApi('/api/memory-settings', 'PUT', { enabled, expectedEpoch: this._memoryEpoch });
+            this._memoryEpoch = data.epoch;
+            const banner = document.getElementById('memoryPausedBanner');
+            if (banner) banner.style.display = enabled ? 'none' : 'block';
+            this.showToast(enabled ? '自动记忆已恢复（只处理之后的新表达）' : '自动记忆已暂停');
+        } catch (e) {
+            this.memoryOpError(e);
+            await this.loadMemorySettings();
+        }
+    }
+
+    async fetchMemoryMap() {
+        try {
+            const res = await this.apiFetch('/api/memories');
+            if (!res.ok) return new Map();
+            const data = await res.json();
+            return new Map((data.memories || []).map(m => [m.id, m]));
+        } catch { return new Map(); }
+    }
+
+    /** 本次参考的记忆（MemoryRef）：liveItems 优先；历史按当前记忆显示已删除/已更新，不还原旧正文 */
+    renderMemoryRefs(el, refs, memoryMap = null, liveItems = null) {
+        if (!el) return;
+        el.innerHTML = '';
+        if (!refs || !refs.length) return;
+        if (!memoryMap && !liveItems) {
+            this.fetchMemoryMap().then(map => this.renderMemoryRefs(el, refs, map));
+            return;
+        }
+        const reasonMeta = { global_preference: '全局偏好', current_book: '本书目标', relevant_topic: '相关主题' };
+        const wrap = document.createElement('div');
+        wrap.className = 'memory-refs';
+        const title = document.createElement('span');
+        title.className = 'memory-refs-title';
+        title.textContent = '本次参考的记忆';
+        wrap.appendChild(title);
+        for (const ref of refs) {
+            const chip = document.createElement('button');
+            chip.className = 'memory-ref-chip';
+            let text;
+            const live = liveItems && liveItems.find(i => i.id === ref.id);
+            if (live) text = live.content;
+            else {
+                const m = memoryMap && memoryMap.get(ref.id);
+                if (!m) { text = '已删除'; chip.classList.add('deleted'); }
+                else if (m.revision !== ref.revision) { text = '已更新：' + m.content; chip.classList.add('updated'); }
+                else text = m.content;
+            }
+            chip.textContent = `[${reasonMeta[ref.reason] || '记忆'}] ${text}`;
+            chip.title = '点击查看记忆管理';
+            chip.addEventListener('click', () => this.openMemoryModal());
+            wrap.appendChild(chip);
+        }
+        el.appendChild(wrap);
+    }
+
+    /** 后处理真实状态轮询：提取完成前不宣称已保存；失败明确提示 */
+    async pollMemoryPostProcessing(requestId) {
+        for (let i = 0; i < 40; i++) {
+            await new Promise(r => setTimeout(r, 750));
+            try {
+                const res = await this.apiFetch(`/api/ask-requests/${requestId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const pp = data.postProcessing;
+                if (!pp || pp.status === 'pending') continue;
+                if (pp.status === 'failed') {
+                    this.showToast(`记忆保存失败：${(pp.error && pp.error.message) || '未知原因'}`, [{ label: '查看', onClick: () => this.openMemoryModal() }], 8000);
+                    return;
+                }
+                const changes = pp.memoryChanges || [];
+                const created = changes.filter(c => c.change === 'created');
+                const cand = changes.filter(c => c.change === 'candidate');
+                if (created.length || cand.length) {
+                    const parts = [];
+                    if (created.length) parts.push(`已自动保存 ${created.length} 条记忆`);
+                    if (cand.length) parts.push(`${cand.length} 条待确认`);
+                    const actions = [{ label: '查看', onClick: () => this.openMemoryModal() }];
+                    if (created.length) actions.unshift({ label: '撤销', onClick: () => this.undoAutoSaved(created) });
+                    this.showToast(parts.join('，'), actions, 10000);
+                }
+                return;
+            } catch { return; }
+        }
+    }
+
+    async undoAutoSaved(created) {
+        const map = await this.fetchMemoryMap();
+        let n = 0;
+        for (const c of created) {
+            const m = map.get(c.id);
+            if (!m) continue;
+            try {
+                await this.memoryApi(`/api/memories/${c.id}`, 'DELETE', { expectedRevision: m.revision });
+                n++;
+            } catch {}
+        }
+        this.showToast(n ? `已撤销 ${n} 条记忆（删除屏障已建立）` : '撤销失败：记忆可能已变化', [], 5000);
+        if (document.getElementById('memoryModal').style.display !== 'none') await this.loadMemories();
     }
 
 
@@ -1246,13 +1938,13 @@ class AIReadingAssistant {
         // 建索引不依赖对话提供商密钥（向量化由 RAG 设置解析，未配置时后端自动降级 BM25），不做密钥门槛拦截
         const book = this.books.find(b => b.id === bookId);
 
-        // 非强制重建时，先查索引状态；已索引则提供重建/删除选项，避免重复耗时重建
+        // 非强制重建时，先查索引状态；已有索引/旧版/构建中则提供选项，避免重复耗时重建
         if (!force) {
             try {
                 const res = await this.apiFetch(`/api/books/${bookId}/index-status`);
                 if (res.ok) {
                     const st = await res.json();
-                    if (st.indexed) { this.showIndexExistingModal(bookId, book, st); return; }
+                    if (st.usable || st.active || st.rebuildRequired || st.build) { this.showIndexExistingModal(bookId, book, st); return; }
                 }
             } catch {}
         }
@@ -1269,15 +1961,26 @@ class AIReadingAssistant {
                 body: JSON.stringify({})
             });
             const data = await response.json();
-            if (response.ok) {
-                const modeText = data.mode === 'embedding+bm25' ? '向量+BM25' : 'BM25 关键词';
-                this.appendTaskLog(`<div class="log-success">✅ 索引完成：${data.chunkCount} 个文本块，模式：${modeText}</div>`);
-                if (data.embedError) {
-                    this.appendTaskLog(`<div class="log-error">⚠️ 向量化失败已降级 BM25：${data.embedError}</div>`);
+            if (response.ok && data.success) {
+                const active = data.active || {};
+                const modeText = active.mode === 'embedding+bm25' ? '向量+BM25' : 'BM25 关键词';
+                this.appendTaskLog(`<div class="log-success">✅ 索引完成：${active.chunkCount || 0} 个文本块，模式：${modeText}</div>`);
+                for (const w of data.warnings || []) {
+                    this.appendTaskLog(`<div class="log-error">⚠️ ${this.escapeHtml(w.message || w.code)}</div>`);
                 }
                 this.setTaskProgress(100, '索引完成');
+            } else if (response.ok && !data.success) {
+                // 重建失败但保留旧索引
+                const active = data.active || {};
+                this.appendTaskLog(`<div class="log-error">❌ 本次重建失败，已保留旧索引（${active.chunkCount || 0} 块）</div>`);
+                for (const w of data.warnings || []) {
+                    this.appendTaskLog(`<div class="log-error">⚠️ ${this.escapeHtml(w.message || w.code)}</div>`);
+                }
+                this.setTaskProgress(0, '重建失败，旧索引仍可用');
             } else {
-                this.appendTaskLog(`<div class="log-error">❌ ${data.error}</div>`);
+                const err = data.error || {};
+                const msg = err.code === 'INDEX_BUILD_RUNNING' ? '该书索引正在构建中，请稍后' : (err.message || data.error || '索引失败');
+                this.appendTaskLog(`<div class="log-error">❌ ${this.escapeHtml(typeof msg === 'string' ? msg : '索引失败')}</div>`);
                 this.setTaskProgress(0, '索引失败');
             }
         } catch {
@@ -1287,13 +1990,24 @@ class AIReadingAssistant {
 
     // 已存在索引时：展示状态并提供 重建/删除 选项
     showIndexExistingModal(bookId, book, st) {
-        const modeText = st.mode === 'embedding+bm25' ? '向量+BM25' : 'BM25 关键词';
-        const timeText = st.indexedAt ? new Date(st.indexedAt).toLocaleString('zh-CN') : '';
+        const active = st.active || {};
+        const modeText = active.mode === 'embedding+bm25' ? '向量+BM25' : (active.mode === 'bm25' ? 'BM25 关键词' : '—');
         this.openTaskModal('建立智能索引');
         document.getElementById('taskProgress').style.display = 'none';
-        this.appendTaskLog(`<div class="log-success">✅ 《${book ? book.title : ''}》已建立索引</div>`);
-        this.appendTaskLog(`<div class="log-info">文本块：${st.chunkCount} 个 · 模式：${modeText}${timeText ? ` · 时间：${timeText}` : ''}</div>`);
-        this.appendTaskLog(`<div class="log-progress">无需重复建立。如需更新可选择重建，或不再需要时删除索引。</div>`);
+        if (st.usable && active.indexVersion) {
+            this.appendTaskLog(`<div class="log-success">✅ 《${book ? book.title : ''}》已建立可定位索引</div>`);
+            this.appendTaskLog(`<div class="log-info">文本块：${active.chunkCount || 0} 个 · 模式：${modeText} · 向量：${active.vectorCount || 0}</div>`);
+        } else if (st.rebuildRequired) {
+            this.appendTaskLog(`<div class="log-error">⚠️ 旧版索引或原文已变化，需要重建后才能定位引用</div>`);
+        } else {
+            this.appendTaskLog(`<div class="log-info">《${book ? book.title : ''}》尚未建立可用索引</div>`);
+        }
+        if (st.build && st.build.state === 'building') {
+            this.appendTaskLog(`<div class="log-progress">正在构建：${st.build.processedChunks || 0}/${st.build.totalChunks || 0} 块</div>`);
+        } else if (st.build && (st.build.state === 'failed' || st.build.state === 'cancelled')) {
+            this.appendTaskLog(`<div class="log-error">上次构建：${st.build.state === 'failed' ? '失败' : '已取消'}${st.build.error ? '（' + this.escapeHtml(st.build.error) + '）' : ''}</div>`);
+        }
+        this.appendTaskLog(`<div class="log-progress">如需更新可选择重建，或不再需要时删除索引。</div>`);
         this.setTaskActions([
             { label: '🗑️ 删除索引', onClick: () => this.deleteBookIndex(bookId) },
             { label: '🔄 重建索引', primary: true, onClick: () => this.indexBook(bookId, true) }
@@ -1501,16 +2215,23 @@ class AIReadingAssistant {
             const response = await this.apiFetch('/api/providers');
             const data = await response.json();
             this.providers = data.providers || [];
+            // 单一通用自定义端点：保存的选择失效（含旧内置预设）时回落到第一个自定义提供商
+            const customs = this.providers.filter(p => p.isCustom);
+            if (!customs.some(p => p.id === this.currentProvider)) {
+                this.currentProvider = customs.length ? customs[0].id : 'custom';
+                localStorage.setItem('selectedProvider', this.currentProvider);
+            }
             this.renderProviderTabs();
             this.switchProvider(this.currentProvider);
         } catch (error) { console.error('加载提供商失败:', error); }
     }
 
     renderProviderTabs() {
-        let html = this.providers.filter(p => !p.isCustom).map(p =>
-            `<button class="provider-tab${p.id === this.currentProvider ? ' active' : ''}" data-provider="${p.id}">${p.name}</button>`
+        // 只保留通用自定义（OpenAI 兼容）提供商；内置预设不再在 Web UI 暴露
+        let html = this.providers.filter(p => p.isCustom).map(p =>
+            `<button class="provider-tab${p.id === this.currentProvider ? ' active' : ''}" data-provider="${p.id}">${this.escapeHtml(p.name)}</button>`
         ).join('');
-        html += `<button class="provider-tab" data-provider="custom">+ 自定义</button>`;
+        html += `<button class="provider-tab${this.currentProvider === 'custom' ? ' active' : ''}" data-provider="custom">+ 自定义</button>`;
         this.providerTabs.innerHTML = html;
         this.providerTabs.querySelectorAll('.provider-tab').forEach(tab => {
             tab.addEventListener('click', (e) => {
@@ -1522,57 +2243,11 @@ class AIReadingAssistant {
     }
 
     switchProvider(provider) {
-        this.currentProvider = provider;
-        this.currentModel = localStorage.getItem(`selectedModel_${provider}`) || null;
-        localStorage.setItem('selectedProvider', provider);
-        this.providerTabs.querySelectorAll('.provider-tab').forEach(tab => {
-            const isCustom = this.providers.find(p => p.id === provider && p.isCustom);
-            tab.classList.toggle('active', isCustom ? tab.dataset.provider === 'custom' : tab.dataset.provider === provider);
-        });
-        const providerInfo = this.providers.find(p => p.id === provider);
-        if (!providerInfo) return;
-
-        // 选中具体提供商时，密钥状态块与其相关，恢复显示
-        document.getElementById('apiKeyStatus').style.display = 'block';
-
-        if (providerInfo.isCustom) {
-            document.querySelector('.api-key-form').style.display = 'block';
-            document.getElementById('customProvidersSection').style.display = 'block';
-            document.getElementById('addProviderForm').style.display = 'none';
-            document.getElementById('apiInfoSection').style.display = 'none';
-        } else {
-            document.querySelector('.api-key-form').style.display = 'block';
-            document.getElementById('customProvidersSection').style.display = 'none';
-            document.getElementById('addProviderForm').style.display = 'none';
-            document.getElementById('apiInfoSection').style.display = 'block';
+        if (provider === 'custom' || !this.providers.find(p => p.id === provider && p.isCustom)) {
+            this.showCustomProviderView();
+            return;
         }
-        if (this.apiKeyLabel) this.apiKeyLabel.textContent = `${providerInfo.name} API密钥`;
-        if (this.apiKeyHint) {
-            if (providerInfo.id === 'zhipu') this.apiKeyHint.innerHTML = `获取密钥：访问 <a href="https://open.bigmodel.cn/" target="_blank">智谱AI</a>`;
-            else if (providerInfo.id === 'siliconflow') this.apiKeyHint.innerHTML = `获取密钥：访问 <a href="https://cloud.siliconflow.cn/" target="_blank">硅基流动</a>`;
-            else this.apiKeyHint.innerHTML = `请输入 ${providerInfo.name} API密钥`;
-        }
-        if (this.modelSelectGroup) {
-            const models = this.getProviderModels(providerInfo);
-            if (models.length > 0) {
-                this.modelSelectGroup.style.display = 'block';
-                const savedModel = this.currentModel || providerInfo.defaultModel;
-                this.currentModel = savedModel;
-                this.modelSelect.innerHTML = models.map(m => `<option value="${m.id}"${m.id === savedModel ? ' selected' : ''}>${m.name}</option>`).join('');
-                this.modelSelect.onchange = (e) => { this.currentModel = e.target.value; localStorage.setItem(`selectedModel_${provider}`, e.target.value); if (this.modelValue) this.modelValue.textContent = e.target.value; };
-                if (this.modelValue) this.modelValue.textContent = savedModel;
-            } else { this.modelSelectGroup.style.display = 'none'; }
-        }
-        if (this.apiInfoList && !providerInfo.isCustom) {
-            if (providerInfo.id === 'zhipu') this.apiInfoList.innerHTML = '<li>API密钥AES-256加密存储</li><li>密钥仅用于调用AI服务</li><li>可随时删除密钥</li><li>推荐 glm-4.5-air 模型</li>';
-            else if (providerInfo.id === 'siliconflow') this.apiInfoList.innerHTML = '<li>API密钥AES-256加密存储</li><li>密钥仅用于调用AI服务</li><li>新用户注册送代金券</li>';
-            else this.apiInfoList.innerHTML = `<li>API密钥AES-256加密存储</li><li>密钥仅用于${providerInfo.name}服务</li>`;
-        }
-        const apiKeyInput = document.getElementById('apiKeyInput');
-        if (apiKeyInput) apiKeyInput.value = '';
-        this.renderCustomProvidersList();
-        this.renderCustomModelTags(provider);
-        this.checkApiKeyStatus();
+        this.showCustomProviderSettings(provider);
     }
 
     getCustomModels(providerId) { try { return JSON.parse(localStorage.getItem(`customModels_${providerId}`)) || []; } catch { return []; } }
@@ -1634,7 +2309,7 @@ class AIReadingAssistant {
         this.currentProvider = providerId;
         this.currentModel = localStorage.getItem(`selectedModel_${providerId}`) || null;
         localStorage.setItem('selectedProvider', providerId);
-        this.providerTabs.querySelectorAll('.provider-tab').forEach(t => t.classList.toggle('active', t.dataset.provider === 'custom'));
+        this.providerTabs.querySelectorAll('.provider-tab').forEach(t => t.classList.toggle('active', t.dataset.provider === providerId));
         document.querySelector('.api-key-form').style.display = 'block';
         document.getElementById('apiKeyStatus').style.display = 'block';
         document.getElementById('customProvidersSection').style.display = 'block';
@@ -1710,7 +2385,11 @@ class AIReadingAssistant {
             const data = await response.json();
             if (data.success) {
                 this.showToast('已删除');
-                if (this.currentProvider === providerId) { this.currentProvider = 'zhipu'; localStorage.setItem('selectedProvider', 'zhipu'); }
+                if (this.currentProvider === providerId) {
+                    const rest = this.providers.filter(p => p.isCustom && p.id !== providerId);
+                    this.currentProvider = rest.length ? rest[0].id : 'custom';
+                    localStorage.setItem('selectedProvider', this.currentProvider);
+                }
                 await this.loadProviders();
                 this.checkApiKeyStatus();
             } else { this.showToast(data.error || '删除失败'); }
@@ -1944,6 +2623,7 @@ class AIReadingAssistant {
         const input = document.getElementById('apiKeyInput');
         const apiKey = input.value.trim();
         if (!apiKey) { this.showToast('请输入API密钥'); return; }
+        if (!this.providers.find(p => p.id === this.currentProvider && p.isCustom)) { this.showToast('请先添加自定义提供商'); return; }
         const btn = document.getElementById('saveApiKeyBtn');
         btn.classList.add('loading'); btn.disabled = true;
         try {
@@ -1955,6 +2635,7 @@ class AIReadingAssistant {
     }
 
     async verifyApiKey() {
+        if (!this.providers.find(p => p.id === this.currentProvider && p.isCustom)) { this.showToast('请先添加自定义提供商'); return; }
         const btn = document.getElementById('verifyApiKeyBtn');
         btn.classList.add('loading'); btn.disabled = true;
         try {
@@ -2081,10 +2762,19 @@ class AIReadingAssistant {
 
     // ==================== Utils ====================
 
-    showToast(message) {
+    showToast(message, actions = [], timeoutMs = 3000) {
         this.toast.textContent = message;
+        this.toast.querySelectorAll('.toast-action').forEach(b => b.remove());
+        for (const a of actions) {
+            const b = document.createElement('button');
+            b.className = 'toast-action';
+            b.textContent = a.label;
+            b.addEventListener('click', () => { this.toast.classList.remove('show'); if (a.onClick) a.onClick(); });
+            this.toast.appendChild(b);
+        }
         this.toast.classList.add('show');
-        setTimeout(() => this.toast.classList.remove('show'), 3000);
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => this.toast.classList.remove('show'), timeoutMs);
     }
 
     getCurrentBookName() {

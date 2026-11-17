@@ -1,0 +1,50 @@
+{
+  "runId": "p2-2026-11-16T07-32-37-330Z",
+  "model": "qwen3.8-flash",
+  "suite": "extract",
+  "scripts": 10,
+  "turns": 17,
+  "errors": 0,
+  "savedTotal": 9,
+  "savedMatched": 9,
+  "goldTotal": 10,
+  "goldMatched": 9,
+  "probeTotal": 8,
+  "misinject": 0,
+  "misinjectProbes": 2,
+  "compliancePass": 1,
+  "complianceTotal": 3,
+  "scheduledTurns": 12,
+  "extractDone": 10,
+  "extractFailed": 2,
+  "checks": [
+    {
+      "id": "p2mem-02",
+      "check": "maxEntries:preference.answer_format",
+      "pass": true,
+      "actual": 1
+    },
+    {
+      "id": "p2mem-03",
+      "check": "forbidActive:preference.answer_length=detailed",
+      "pass": true
+    },
+    {
+      "id": "p2mem-09",
+      "check": "afterClearCount",
+      "pass": true,
+      "actual": 0
+    }
+  ],
+  "precision": 1,
+  "recall": 0.9,
+  "misinjectRate": 0,
+  "complianceRate": 0.3333333333333333,
+  "extractLatencyP50": 31236,
+  "scheduledRatio": 0.7058823529411765,
+  "thresholdExperiment": null,
+  "layers": null,
+  "checksPass": 3,
+  "checksTotal": 3,
+  "finishedAt": "2026-11-16T07:54:39.618Z"
+}

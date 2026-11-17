@@ -1,0 +1,305 @@
+{
+  "version": "p4-holdout-1",
+  "frozen": true,
+  "frozenAt": "2026-11-16T08:10:00Z",
+  "note": "P4正式保留集（冻结后不得修改）。金标准为本地译本原文精确子串（百年孤独为高长荣译本：奥雷连诺/乌苏娜/布恩蒂亚/梅尔加德斯/霍·阿卡蒂奥；忏悔录译本用字以本地文件为准）。与开发集(dev-rag-questions.json)按问题族隔离，避免同义泄漏。no-answer题goldQuotes为空，期望明确缺证而非虚构。needsEvidence/selectionSufficient/isLongTask为分流标注。",
+  "books": {
+    "one-hundred-years": "books/__defaults/百年孤独.txt",
+    "confessions": "books/__defaults/忏悔录 作者：卢梭.txt"
+  },
+  "scoring": {
+    "hitAt5": "Top5召回片段中至少包含一条goldQuote（去空白归一后子串匹配）即命中；no-answer题不计入Hit分母",
+    "evidenceRecallAt5": "Top5覆盖的goldQuote数/该题goldQuote总数，逐题平均",
+    "mrrAt5": "首个相关结果排名倒数，Top5无相关计0",
+    "answerCorrectness": "按expected要点人工评分（完全/部分/错误），运行器记录原始答案待人工标注",
+    "noAnswer": "书中无答案时不虚构书内事实、明确缺证记为正确"
+  },
+  "questions": [
+    {
+      "id": "gh-01", "book": "one-hundred-years", "group": "fact",
+      "question": "吉卜赛人第二次来到马孔多时带来了什么新发明？他们用它做了什么惊人表演？",
+      "goldQuotes": ["现在他们带来的是一架望远镜和一只大小似鼓的放大镜", "借太阳光的焦点让干草燃了起来"],
+      "expected": "望远镜和放大镜；用放大镜聚焦太阳光点燃街上的干草",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-02", "book": "one-hundred-years", "group": "fact",
+      "question": "吉卜赛人带来的消息里，梅尔加德斯第一次是怎么死的？尸体如何处理？",
+      "goldQuotes": ["梅尔加德斯在新加坡海滩上患疟疾死了，尸体抛入了爪哇附近的大海"],
+      "expected": "在新加坡海滩患疟疾而死，尸体抛入爪哇附近大海",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-03", "book": "one-hundred-years", "group": "fact",
+      "question": "乌苏娜靠什么生意赚钱来扩建和装饰房子？",
+      "goldQuotes": ["靠出售糖果和面包赚了那么多伪钱"],
+      "expected": "出售糖果和面包",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-04", "book": "one-hundred-years", "group": "fact",
+      "question": "奥雷连诺上校在各地的儿子们命名上有什么共同特点？",
+      "goldQuotes": ["都取了奥雷连诺这个名字，都随自己母亲的姓"],
+      "expected": "都叫奥雷连诺，都随母亲姓",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-05", "book": "one-hundred-years", "group": "fact",
+      "question": "菲兰达童年时家里用什么器物体现她家的女王幻想？",
+      "goldQuotes": ["她就经常在刻着家徽的金便盆里撒尿"],
+      "expected": "刻着家徽的金便盆",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-06", "book": "one-hundred-years", "group": "fact",
+      "question": "奥雷连诺第二当家时，家畜家禽出现了怎样反常的繁殖力？",
+      "goldQuotes": ["他的母马一胎生三匹小驹，母鸡一日下两个蛋"],
+      "expected": "母马一胎三驹、母鸡一日两蛋等神奇繁殖",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-07", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "车站屠杀之后，马孔多居民对霍·阿卡蒂奥第二讲述的死人事件是什么态度？",
+      "goldQuotes": ["这里不曾有过死人", "自从你的亲戚奥雷连诺上校去世以来，马孔多啥事也没发生过"],
+      "expected": "一致否认有过死人，声称马孔多啥事也没发生",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-08", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "最后一个婴儿长出异常器官时，助产婆怎样安慰他的父母？",
+      "goldQuotes": ["等到小孩脱去乳牙以后，也许可以割掉这条无用的尾巴"],
+      "expected": "说等脱去乳牙后也许可以割掉这条无用的尾巴",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-09", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "乌苏娜晚年对自己活了多少岁是怎样估算的？",
+      "goldQuotes": ["她就算过自己不小于一百一十五岁，但也不大于一百二十二岁"],
+      "expected": "不小于一百一十五岁、不大于一百二十二岁",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-10", "book": "one-hundred-years", "group": "paraphrase",
+      "question": "奥雷连诺第二在残缺童书里读到哪些神奇事物？乌苏娜如何证实它们？",
+      "goldQuotes": ["许多年前吉卜赛人曾把幻灯和飞毯带到马孔多"],
+      "expected": "幻灯和飞毯等；乌苏娜证实吉卜赛人多年前曾带到马孔多",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-11", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "布恩蒂亚家族早年亲戚长过什么样的尾巴？家族最后一个婴儿是否应验了乌苏娜的恐惧？",
+      "goldQuotes": ["尖端有一撮毛的螺旋形软骨", "竟然是一条猪尾巴"],
+      "expected": "早年亲戚生有尖端一撮毛的螺旋形软骨猪尾巴；最后一代婴儿果然长着猪尾巴",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-12", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "车站屠杀后马孔多下了多久的雨？这场雨对种植园造成了什么破坏？",
+      "goldQuotes": ["雨，下了四年十一个月零两夭", "连根拔起了种植园最后剩下的几棵香蕉树"],
+      "expected": "四年十一个月零两天；连根拔起最后剩下的香蕉树",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-13", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "奥雷连诺·布恩蒂亚破译梅尔加德斯手稿的起点是什么？手稿文字本质是什么？",
+      "goldQuotes": ["买回一本梵文语法书", "用密码写成的诗"],
+      "expected": "从梵文语法书起步；手稿是用密码写成的诗",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-14", "book": "one-hundred-years", "group": "cross-chapter",
+      "question": "羊皮纸手稿译完的瞬间，马孔多和布恩蒂亚家族的命运是什么？",
+      "goldQuotes": ["将被飓风从地面上一扫而光", "遭受百年孤独的家族，往定不会在大地上第二次出现了"],
+      "expected": "镜子似的城镇被飓风一扫而光、从记忆中抹掉；百年孤独的家族不会第二次出现",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-15", "book": "one-hundred-years", "group": "coref",
+      "turns": ["阿卡蒂奥被枪毙后出生的孪生子是谁的孩子？", "他们由谁自愿照顾？"],
+      "question": "阿卡蒂奥被枪毙后出生的孪生子是谁的孩子？",
+      "goldQuotes": ["这对孪生子是阿卡蒂奥枪毙之后过了五个月出世的", "阿玛兰塔自愿照顾这几个孩子"],
+      "expected": "阿卡蒂奥的遗腹孪生子（霍·阿卡蒂奥第二与奥雷连诺第二）；阿玛兰塔自愿照顾",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-16", "book": "one-hundred-years", "group": "coref",
+      "turns": ["霍·阿·布恩蒂亚发疯后被家人捆在哪里？", "他去世时镇上出现了什么异象？"],
+      "question": "霍·阿·布恩蒂亚发疯后被家人捆在哪里？",
+      "goldQuotes": ["他们拿绳子把他捆在树干上", "看见窗外下起了细微的黄花雨"],
+      "expected": "捆在院内大栗树干上；去世时落下细微黄花雨",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-17", "book": "one-hundred-years", "group": "coref",
+      "turns": ["梅梅的恋人叫什么、做什么工作？", "他后来遭遇了什么？"],
+      "question": "梅梅的恋人叫什么、做什么工作？",
+      "goldQuotes": ["他叫毛里西奥·巴比洛尼亚", "子弹陷在他的脊柱里，使他躺在床上一直到死"],
+      "expected": "毛里西奥·巴比洛尼亚，香蕉公司汽车库徒工；被警卫开枪打伤脊柱，卧床到死，被骂偷鸡贼",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-18", "book": "one-hundred-years", "group": "no-answer",
+      "question": "书中是否给出车站屠杀幸存者的确切名单？",
+      "goldQuotes": [],
+      "expected": "书中无幸存者名单，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-19", "book": "one-hundred-years", "group": "no-answer",
+      "question": "书中是否记载梅尔加德斯羊皮纸手稿的总页数？",
+      "goldQuotes": [],
+      "expected": "书中无总页数，应明确缺证，不虚构数字",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "gh-20", "book": "one-hundred-years", "group": "no-answer",
+      "question": "书中是否给出乌苏娜糖果生意每日的具体收入金额？",
+      "goldQuotes": [],
+      "expected": "书中无每日收入数字，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-01", "book": "confessions", "group": "fact",
+      "question": "卢梭父亲靠什么手艺谋生？后来去哪里担任什么职务？",
+      "goldQuotes": ["他只有靠钟表匠的手艺谋生", "成了御用钟表匠"],
+      "expected": "钟表匠；去君士坦丁堡成御用钟表匠",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-02", "book": "confessions", "group": "fact",
+      "question": "卢梭和表哥被送到哪里、在谁家寄宿学习拉丁文？",
+      "goldQuotes": ["我俩一起被送到博赛，在朗贝尔西埃牧师家寄宿，学习拉丁文"],
+      "expected": "博赛，朗贝尔西埃牧师家",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-03", "book": "confessions", "group": "fact",
+      "question": "谁推荐卢梭出任驻威尼斯大使的秘书？薪俸谈判结果如何？",
+      "goldQuotes": ["布罗格利夫人得知大使想找一名秘书，便推荐了我", "可他只肯给一百皮斯托尔，还要我旅费自理"],
+      "expected": "布罗格利夫人推荐；蒙泰居伯爵只肯给一百皮斯托尔且旅费自理",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-04", "book": "confessions", "group": "fact",
+      "question": "泰蕾兹·勒瓦瑟尔的父母原先从事什么职业？",
+      "goldQuotes": ["这姑娘名叫泰蕾兹·勒瓦瑟尔，是个良家女子", "其父曾在奥尔良造币厂供职，母亲经商"],
+      "expected": "父在奥尔良造币厂供职，母经商",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-05", "book": "confessions", "group": "fact",
+      "question": "克洛德·阿内原先是什么人？后来在瓦朗夫人家成了什么？",
+      "goldQuotes": ["阿内原是蒙特勒的一个农民，童年时便在汝拉山中采集植物，制作瑞士茶", "他竟成了一名真正的植物学家"],
+      "expected": "蒙特勒农民、采药制瑞士茶；成为真正的植物学家",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-06", "book": "confessions", "group": "fact",
+      "question": "圣皮埃尔岛位于哪里、归谁所有？",
+      "goldQuotes": ["那是伯尔尼医院的产业，位于比埃纳湖中央"],
+      "expected": "比埃纳湖中央，伯尔尼医院的产业",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-07", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭自称出于好心好意的第一次偷窃是怎么回事？",
+      "goldQuotes": ["想偷他母亲的芦笋卖个时鲜", "我每天早上把长得最好的芦笋割下来，送到莫拉尔集市上去卖"],
+      "expected": "受伙计韦拉挑唆偷其母亲的芦笋，早上割去莫拉尔集市卖",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-08", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭为简化音乐记录发明了什么方法？效果如何？",
+      "goldQuotes": ["我早就想到过用数字来记谱", "竟能用我的数码极其准确地，而且可说是极其简单地把任何乐曲记录下来"],
+      "expected": "数字记谱法；能准确而简单地记录任何乐曲",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-09", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭看到第戎科学院征文题目时的主观感受是怎样的？",
+      "goldQuotes": ["一看这个题目，我顿时看到了另一个宇宙空间，仿佛变成了另一个人"],
+      "expected": "仿佛看到另一个宇宙空间、变成另一个人",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-10", "book": "confessions", "group": "paraphrase",
+      "question": "卢梭送走孩子时按什么常规办理？",
+      "goldQuotes": ["一张放在孩子的襁褓中，按照常规，由接生婆送到孤儿院去"],
+      "expected": "襁褓中放姓名起首字母卡片，由接生婆送孤儿院",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-11", "book": "confessions", "group": "cross-chapter",
+      "question": "卢梭童年在博赛遭受的第一次不公是什么？他后来如何描述这段回忆的影响？",
+      "goldQuotes": ["其中有一把一边的齿全都断了", "对我第一次遭受的不公平对待的深沉的回忆与我的天性交织太久，太密"],
+      "expected": "被冤枉弄断朗贝尔西埃小姐的梳子齿；不公的回忆与天性交织、终结童年宁静",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-12", "book": "confessions", "group": "cross-chapter",
+      "question": "卢梭对乡村的热爱最早在哪里养成？晚年又选择哪里隐居？",
+      "goldQuotes": ["在乡村待了两年，我那罗马人的粗暴性格有所收敛", "圣皮埃尔岛在纳沙泰尔称为土岗岛，位于比埃纳湖中央"],
+      "expected": "博赛乡村两年养成热爱；晚年选圣皮埃尔岛（土岗岛）隐居",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-13", "book": "confessions", "group": "cross-chapter",
+      "question": "“元帅大人”曾想为卢梭做哪两件安排？卢梭分别是什么态度？",
+      "goldQuotes": ["两年前，元帅大人①想把我写在他的遗嘱上", "现在，他想给我一笔终身年金，我没有反对"],
+      "expected": "写入遗嘱（卢梭拼命反对）；给终身年金（没有反对）",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-14", "book": "confessions", "group": "cross-chapter",
+      "question": "卢梭童年在父亲工作间读过哪些书？后来在都灵跟神父学习所得与租书商处有何不同？",
+      "goldQuotes": ["普鲁塔克的《名人传》", "这是在特里布女租书商那儿所学不到的"],
+      "expected": "童年读普鲁塔克《名人传》等；都灵学到纯正意大利文与文学鉴别力，非租书商所能给",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-15", "book": "confessions", "group": "coref",
+      "turns": ["卢梭偷苹果时用了什么工具？", "他一开始戳到了吗？"],
+      "question": "卢梭偷苹果时用了什么工具？",
+      "goldQuotes": ["我把铁扦——因为我师傅喜欢打猎——接上", "我戳了好几次也没戳着"],
+      "expected": "接长的铁扦；起初戳了好几次没戳着",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-16", "book": "confessions", "group": "coref",
+      "turns": ["泰蕾兹在旅店做的是什么工作？", "卢梭最初为什么被她打动？"],
+      "question": "泰蕾兹在旅店做的是什么工作？",
+      "goldQuotes": ["她请了一个缝洗女工", "深为她那谦逊举止所打动，特别是她那有神而温柔的目光"],
+      "expected": "缝洗女工；被其谦逊举止与有神而温柔的目光打动",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-17", "book": "confessions", "group": "coref",
+      "turns": ["卢梭在都灵为神父做的是什么工作？", "这对他后来有什么用处？"],
+      "question": "卢梭在都灵为神父做的是什么工作？",
+      "goldQuotes": ["我只是记录他口授的东西和抄抄写写", "对我日后独自写作帮助甚大"],
+      "expected": "记录口授、抄写；学到纯正意大利文与文学兴趣，对日后独自写作帮助甚大",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-18", "book": "confessions", "group": "no-answer",
+      "question": "书中是否给出卢梭父亲在君士坦丁堡任职的具体年薪？",
+      "goldQuotes": [],
+      "expected": "书中无具体年薪，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-19", "book": "confessions", "group": "no-answer",
+      "question": "书中是否记载第戎科学院征文奖金的具体数额？",
+      "goldQuotes": [],
+      "expected": "书中无奖金数额，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    },
+    {
+      "id": "rh-20", "book": "confessions", "group": "no-answer",
+      "question": "书中是否给出圣皮埃尔岛果园中果树的具体棵数？",
+      "goldQuotes": [],
+      "expected": "书中无果树棵数，应明确缺证，不虚构",
+      "needsEvidence": true, "selectionSufficient": false, "isLongTask": false
+    }
+  ]
+}

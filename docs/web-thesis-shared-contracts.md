@@ -1,6 +1,35 @@
 # Web 毕设共享接口与协作约定
 
-文档版本：SC-1.1（2026-10-28）。性质：目标接口规范，供阶段实施和AI交接使用；不表示这些接口已经实现，也不是业务代码开工授权。SC-1.1补齐模块细化时的内容快照、重放校验与记忆生命周期约束；尚未有已上线协议，消息schemaVersion仍为1。
+文档版本：SC-1.4（2026-11-16）。性质：目标接口规范，供阶段实施和AI交接使用；不表示这些接口已经实现，也不是业务代码开工授权。SC-1.1补齐模块细化时的内容快照、重放校验与记忆生命周期约束；尚未有已上线协议，消息schemaVersion仍为1。
+
+## SC-1.4 变更说明（P4 实现期，additive）
+
+- 凭据加密版本化（`credential-crypto.js`）：新写入 `v2.` + base64(iv12|ciphertext|tag16) AES-256-GCM；legacy `ivHex:cipherHex` AES-256-CBC 仅保持可解密；`formatOf`/`migrate(db)` 显式迁移（事务、坏行保留并计数），**不自动迁移业务库**——真实 data.db 迁移须单独确认并在一致备份上执行。`ENCRYPTION_KEY` 语义不变（未配置仍每次启动随机，重启丢旧密文为既有行为）。
+- 评测运行器参数化（不改默认行为）：`run-p1b-eval.js --dataset/--prefix/--retrieval-compare`（保留集+BM25/混合直接检索对照+无答案题缺证启发式+空答案计数）；`run-p2-eval.js --dataset/--prefix/--only`（记忆保留集；goldAfter 动作后全状态评分、goldAny 枚举匹配、maxExtractionCalls 按段日志计数）。冻结数据集：`holdout-rag-questions.json`（p4-holdout-1）、`holdout-memory-scripts-p2.json`。
+- 测试 helper 假模型 `pickReply` 增加"本轮可引用的原文证据"提示分支返回 `finalAfterTools`（模拟模型在最终轮引用证据）；`streamChunks` 非空时仍优先覆盖流式内容（harness 需置 [] 才能看到引用答案）。仅测试设施，不影响生产契约。
+- 以上均为加法，未改变既有字段含义、偏移单位、引用格式与 SSE 终态规则。
+
+## SC-1.3 变更说明（P2 实现期，additive）
+
+- 迁移 `web_003_memory_lifecycle` 落地：`user_memories` 事务内重建（kind/scope/book_id/key/normalized_value/status/revision/source_*/order_message_id/last_seen_at/expires_at + CHECK + 用户级/书级 active 部分唯一索引）；新增 `memory_user_state`（enabled/memory_epoch/blocked_through_message_id）与 `memory_sources`（pending/processing/done/skipped/failed，不级联于消息/会话）；旧表备份 `user_memories_legacy_backup` 仅供回滚核对；sqlite_sequence 高水位保留。
+- 第8节管理API按目标落地：GET/PUT/confirm/complete/DELETE `/api/memories`、GET/PUT `/api/memory-settings`；409 MEMORY_CONFLICT、400 INVALID_MEMORY、404 语义不变；单项操作返回 `{ memory|deleted, epoch, memoryChanges }`，清空返回 `{ cleared, epoch }`。
+- `memory_context` SSE 事件落地（refs + 实际注入的 MemoryView）；助手 metadata.memoryRefs 存 `{ id, revision, scope, bookId, reason }`，历史重开按当前记忆显示已删除/已更新，不复制旧正文。
+- `postProcessing` 真实状态落地：完成落库时按三路触发调度决定 pending/skipped；后台提交同事务写回真实 memoryChanges；屏障/重启作废来源时同事务聚合 pending 请求，纯跳过返回 []；已终结回执不重写。
+- 抽取候选内部契约（模型输出，服务端校验，不对外暴露）：kind/key/normalizedValue/content/scope/sourceMessageId/sourceRange/statementType/stability/relation/matchKey/reopen；非法kind/键/越权来源/敏感内容拒绝写入（不再降级入库）；one_turn 跳过。
+- 删除会话先建立记忆屏障再删；删除书籍书级 active/candidate 标 expired 且该书在途来源 skipped（不递增 epoch，属 §8.3 列举之外）。
+- 迁移 `web_004_memory_vectors`：记忆作用域语义向量表（memory_id 外键级联删除），不复用书籍 rag_vec；M5 语义补充召回（词法漏过且 cosine≥0.5、embed 指纹一致才注入；Embedding 不可用静默降级词法；`MEM_SEMANTIC=0` 为测试消融条件）。
+- 抽取候选校验对数字字符串 sourceMessageId/sourceRange 做结构 coercion 后仍校验归属与范围（模型输出格式变异，不放宽语义校验）。
+- 暂停期显式"记住"走候选确认路径（forceCandidate），用户确认后才生效，确认不重新开启自动记忆。
+- 以上均为加法或既定目标的实现，未改变既有字段含义、偏移单位、引用格式与 SSE 终态规则。
+
+## SC-1.2 变更说明（P1b 实现期， additive）
+
+- `tool_result` 事件在最小字段之外附加 `source`（本次实际检索来源字符串，如 `hybrid(embedding+bm25)+rerank`），供前端/评测区分重排是否生效；不改变最小字段与终态语义。
+- 新增 `GET /api/books/:id/content-meta` → `{ bookId, supported, contentHash }`：引用跳转前轻量复核权限与内容hash，避免整书下载；404 表示删除/无权。
+- `GET /api/conversations/:id/messages` 默认返回全部可见消息（`?window=1` 仅工作窗口），消息为第10节 MessageView（含 id/requestId/status/metadata），供历史引用恢复。
+- `GET /api/books/:id`（TXT）与 `GET /api/books/:id/index-status`、`POST /api/books/:id/index` 按 RAG 方案 §5.4 落地：前者返回 `{ book, content, contentHash, chapters }`，后两者返回 IndexStatus 视图（POST 另含 success/warnings）。
+- 证据 `verified` 语义落地：locator 存在且 contentHash 与当前授权内容一致时为 true；选文 locator 经服务端验证（失配409/不符422）后 user_selection 亦可为 true。
+- 以上均为加法或既定目标的实现，未改变既有字段含义、偏移单位、引用格式与 SSE 终态规则。
 
 阅读顺序：[总方案](web-thesis-plan.md) → 本文 → [RAG实施方案](web-thesis-rag-plan.md) 或 [记忆实施方案](web-thesis-memory-plan.md) → 当前代码与阶段报告。P0先按 [P0方案](web-thesis-p0-plan.md) 建立旧版基线，不提前套用新版协议。
 

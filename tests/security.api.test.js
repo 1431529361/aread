@@ -95,33 +95,46 @@ test('P0-03 密钥校验失败路径日志不泄漏', async () => {
     await fake.control({ httpError: null });
 });
 
-test('P0-04 非法记忆kind被安全降级为fact，合法kind保留', async () => {
+test('P0-04 非法记忆kind被拒绝写入（P2契约），合法kind保留且来源可溯', async () => {
     await fake.reset();
     await fake.control({ extraction: MALICIOUS_EXTRACTION });
 
+    const requestId = crypto.randomUUID();
     const stream = await postSSE(srv.url, '/api/ask-stream', {
         token: user.token,
-        body: { requestId: crypto.randomUUID(), question: '请记住我的偏好', provider: providerId }
+        body: { requestId, question: '请记住我的偏好', provider: providerId }
     });
     assert.ok(stream.events.some(e => e.type === 'end'));
 
     const memories = await waitFor(async () => {
         const res = await api(srv.url, '/api/memories', { token: user.token });
-        return res.data.memories && res.data.memories.length >= 5 ? res.data.memories : null;
+        return res.data.memories && res.data.memories.length >= 2 ? res.data.memories : null;
     });
     assert.ok(memories, '异步记忆抽取应入库');
 
-    const allowed = new Set(['preference', 'fact', 'interest']);
+    const allowed = new Set(['preference', 'fact', 'interest', 'reading_goal', 'open_question']);
     for (const m of memories) {
-        assert.ok(allowed.has(m.kind), `非法kind未被降级: ${JSON.stringify(m.kind)}`);
+        assert.ok(allowed.has(m.kind), `非法kind未被拒绝: ${JSON.stringify(m.kind)}`);
     }
-    assert.ok(memories.some(m => m.kind === 'preference' && m.content === '用户偏好分点回答'));
+    assert.ok(memories.some(m => m.kind === 'preference' && m.content === '用户偏好分点回答' && m.status === 'active'));
     assert.ok(memories.some(m => m.kind === 'interest'), '合法interest应保留');
-    // 非法 kind 的三条均降级为 fact
-    const factContents = memories.filter(m => m.kind === 'fact').map(m => m.content);
-    assert.ok(factContents.includes('非法kind样本'));
-    assert.ok(factContents.includes('大写kind样本'));
-    assert.ok(factContents.includes('数字kind样本'));
+    // P2：非法 kind 不再降级入库，而是整条拒绝
+    const contents = memories.map(m => m.content);
+    assert.ok(!contents.includes('非法kind样本'), '非法kind候选不应写入');
+    assert.ok(!contents.includes('大写kind样本'), '大写kind候选不应写入');
+    assert.ok(!contents.includes('数字kind样本'), '数字kind候选不应写入');
+    // 来源可溯：user_message + 原话范围
+    const pref = memories.find(m => m.content === '用户偏好分点回答');
+    assert.strictEqual(pref.source.type, 'user_message');
+    assert.ok(Number.isInteger(pref.source.messageId));
+    assert.deepStrictEqual(pref.source.range, { start: 0, end: 7 });
+    // 后处理真实状态：completed + 真实 memoryChanges（2条合法）
+    const req = await waitFor(async () => {
+        const r = await api(srv.url, `/api/ask-requests/${requestId}`, { token: user.token });
+        return r.data && r.data.postProcessing && r.data.postProcessing.status !== 'pending' ? r.data : null;
+    });
+    assert.strictEqual(req.postProcessing.status, 'completed');
+    assert.strictEqual(req.postProcessing.memoryChanges.length, 2);
 });
 
 test('P0-04 记忆content中的HTML原样存储（前端负责安全渲染，浏览器用例验证）', async () => {

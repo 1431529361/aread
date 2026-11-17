@@ -7,6 +7,7 @@
  */
 
 const { getDB } = require('./database');
+const crypto = require('crypto');
 
 const EMBED_DIMS = 1024;
 const ALIYUN_KEY_PROVIDER = 'aliyun-embed'; // api_keys 表中的 provider 标识
@@ -185,20 +186,80 @@ function resolveEmbedder(userId, forProvider = null) {
 // ==================== Embedding API 调用 ====================
 
 /**
+ * 模型配置指纹：规范化 endpoint + 模型名 + 维度 + 影响输出的 extraBody。
+ * 不含 Key：凭据轮换不使向量失效；地址变更但模型同名判为不兼容。
+ */
+function embedFingerprint(embedder) {
+    const norm = {
+        endpoint: String(embedder.endpoint || '').trim().replace(/\/+$/, '').toLowerCase(),
+        model: String(embedder.model || ''),
+        dims: embedder.dims,
+        extraBody: embedder.extraBody || null
+    };
+    return crypto.createHash('sha256').update(JSON.stringify(norm)).digest('hex');
+}
+
+/**
+ * 校验 Embedding 响应：数量/顺序/维度/数值全部通过才返回。
+ * 响应带 index 时按 index 重排并检查重复/缺失；无 index 时本适配器约定
+ * OpenAI 兼容接口按输入顺序返回（明确保序，不猜测）。
+ */
+function validateEmbeddingResponse(data, expectedCount, dims) {
+    const items = Array.isArray(data && data.data) ? data.data : null;
+    if (!items || items.length !== expectedCount) throw new Error('Embedding 返回数量与输入不一致');
+    let ordered = items;
+    if (items.some(d => d && d.index !== undefined)) {
+        const seen = new Set();
+        ordered = new Array(expectedCount);
+        for (const d of items) {
+            const idx = d && d.index;
+            if (!Number.isInteger(idx) || idx < 0 || idx >= expectedCount || seen.has(idx)) {
+                const err = new Error('Embedding 返回 index 重复/越界'); err.fatal = true; throw err;
+            }
+            seen.add(idx);
+            ordered[idx] = d;
+        }
+        if (seen.size !== expectedCount) { const err = new Error('Embedding 返回 index 缺失'); err.fatal = true; throw err; }
+    }
+    const vectors = ordered.map(d => d && d.embedding);
+    for (let i = 0; i < vectors.length; i++) {
+        const v = vectors[i];
+        if (!Array.isArray(v) || v.length !== dims) {
+            const err = new Error(`Embedding 维度不匹配：期望 ${dims}，实际 ${Array.isArray(v) ? v.length : typeof v}（第${i + 1}条，请更换模型或联系管理员）`);
+            err.fatal = true;
+            throw err;
+        }
+        for (const x of v) {
+            if (typeof x !== 'number' || !Number.isFinite(x)) {
+                const err = new Error(`Embedding 第${i + 1}条含非法数值（NaN/Infinity）`); err.fatal = true; throw err;
+            }
+        }
+    }
+    return vectors;
+}
+
+/**
  * 调用 Embedding API（带重试）
  * @param {Object} embedder resolveEmbedder 返回的对象
  * @param {string[]} texts
+ * @param {Object} opts { retries, timeoutMs, signal, deadlineAt }
  * @returns {Promise<number[][]>}
  */
-async function embedTexts(embedder, texts, { retries = 2, timeoutMs = 30000 } = {}) {
+async function embedTexts(embedder, texts, { retries = 2, timeoutMs = 30000, signal = null, deadlineAt = null } = {}) {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt++) {
+        if (signal && signal.aborted) { const e = new Error('已取消'); e.name = 'AbortError'; throw e; }
+        const controller = new AbortController();
+        const onAbort = () => controller.abort();
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+        const remaining = deadlineAt ? Math.max(1, deadlineAt - Date.now()) : timeoutMs;
+        const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, remaining));
         try {
             const resp = await fetch(embedder.endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${embedder.apiKey}` },
                 body: JSON.stringify({ model: embedder.model, input: texts, ...(embedder.extraBody || {}) }),
-                signal: AbortSignal.timeout(timeoutMs)
+                signal: controller.signal
             });
             if (!resp.ok) {
                 const errBody = await resp.json().catch(() => ({}));
@@ -208,20 +269,18 @@ async function embedTexts(embedder, texts, { retries = 2, timeoutMs = 30000 } = 
                 throw err;
             }
             const data = await resp.json();
-            const vectors = data.data.map(d => d.embedding);
-            if (vectors.length !== texts.length) throw new Error('Embedding 返回数量与输入不一致');
-            if (vectors[0].length !== embedder.dims) {
-                const err = new Error(`Embedding 维度不匹配：期望 ${embedder.dims}，实际 ${vectors[0].length}（请更换模型或联系管理员）`);
-                err.fatal = true;
-                throw err;
-            }
-            return vectors;
+            return validateEmbeddingResponse(data, texts.length, embedder.dims);
         } catch (e) {
             lastErr = e;
+            // 外部取消立即终止，不重试
+            if (signal && signal.aborted) { e.name = 'AbortError'; throw e; }
             // 维度不匹配 / 4xx（限流除外）重试无意义
             const status = e.status || 0;
             if (e.fatal || (status >= 400 && status < 500 && status !== 429)) break;
             if (attempt < retries) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        } finally {
+            clearTimeout(timer);
+            if (signal) signal.removeEventListener('abort', onAbort);
         }
     }
     throw lastErr;
@@ -245,5 +304,7 @@ module.exports = {
     saveEmbeddingSettings,
     resolveEmbedder,
     embedTexts,
+    embedFingerprint,
+    validateEmbeddingResponse,
     validateEmbedder
 };

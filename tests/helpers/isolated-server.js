@@ -68,7 +68,7 @@ async function startIsolatedServer({ keepKeys = false, extraEnv = {} } = {}) {
     env.READER_DATA_ROOT = dataRoot;
     env.DOTENV_CONFIG_PATH = path.join(dataRoot, '.env');
     env.JWT_SECRET = 'p0-test-jwt-' + crypto.randomBytes(8).toString('hex');
-    env.ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+    env.ENCRYPTION_KEY = extraEnv.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
     env.PORT = String(port);
 
     const logs = [];

@@ -1,0 +1,134 @@
+{
+  "runId": "p3-2026-11-14T13-35-05-147Z",
+  "embedModel": "BAAI/bge-m3",
+  "conditions": {
+    "hybrid-500": {
+      "name": "hybrid-500",
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "recallAt5": 0.59375,
+      "mrrAt5": 0.54375,
+      "p50": 124,
+      "p95": 412,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 1167
+        }
+      }
+    },
+    "hybrid-800": {
+      "name": "hybrid-800",
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "recallAt5": 0.59375,
+      "mrrAt5": 0.625,
+      "p50": 147,
+      "p95": 409,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 400
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 731
+        }
+      }
+    },
+    "hybrid-1200": {
+      "name": "hybrid-1200",
+      "answerable": 16,
+      "hitAt5": 0.8125,
+      "recallAt5": 0.71875,
+      "mrrAt5": 0.6666666666666666,
+      "p50": 137,
+      "p95": 394,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 267
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 491
+        }
+      }
+    },
+    "hybrid-500+expand": {
+      "name": "hybrid-500+expand",
+      "answerable": 16,
+      "hitAt5": 0.75,
+      "recallAt5": 0.65625,
+      "mrrAt5": 0.6145833333333333,
+      "p50": 125,
+      "p95": 424,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 1167
+        }
+      }
+    },
+    "hybrid-500+rerank": {
+      "name": "hybrid-500+rerank",
+      "answerable": 16,
+      "hitAt5": 0.8125,
+      "recallAt5": 0.65625,
+      "mrrAt5": 0.73125,
+      "p50": 333,
+      "p95": 582,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 1167
+        }
+      }
+    }
+  },
+  "corefRewrite": {
+    "n": 4,
+    "original": {
+      "hitAt5": 0,
+      "recallAt5": 0,
+      "mrrAt5": 0
+    },
+    "rewritten": {
+      "hitAt5": 0,
+      "recallAt5": 0,
+      "mrrAt5": 0
+    }
+  },
+  "cache": {
+    "books": 5,
+    "coldP50": 111,
+    "hotP50": 112,
+    "coldMs": [
+      111,
+      139,
+      106,
+      102,
+      116
+    ],
+    "hotMs": [
+      118,
+      120,
+      107,
+      112,
+      111
+    ]
+  },
+  "finishedAt": "2026-11-14T13:39:08.519Z"
+}

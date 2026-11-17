@@ -1,0 +1,863 @@
+{
+  "generatedAt": "2026-11-16T09:34:10.253Z",
+  "datasetVersion": "p4-holdout-1",
+  "totalQuestions": 40,
+  "byGroup": {
+    "fact": 12,
+    "paraphrase": 8,
+    "cross-chapter": 8,
+    "coref": 6,
+    "no-answer": 6
+  },
+  "byBook": {
+    "one-hundred-years": 20,
+    "confessions": 20
+  },
+  "totalGoldQuotes": 56,
+  "missedQuotes": 0,
+  "allQuotesVerified": true,
+  "results": [
+    {
+      "id": "gh-01",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "现在他们带来的是一架望远镜和一只大小似鼓的放大镜",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 925,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "借太阳光的焦点让干草燃了起来",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 1119,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-02",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "梅尔加德斯在新加坡海滩上患疟疾死了，尸体抛入了爪哇附近的大海",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 9542,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-03",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "靠出售糖果和面包赚了那么多伪钱",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 33626,
+          "chapter": "第四章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-04",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "都取了奥雷连诺这个名字，都随自己母亲的姓",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 90970,
+          "chapter": "第八章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-05",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "她就经常在刻着家徽的金便盆里撒尿",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 123483,
+          "chapter": "第十一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-06",
+      "book": "one-hundred-years",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "他的母马一胎生三匹小驹，母鸡一日下两个蛋",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 113820,
+          "chapter": "第十章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-07",
+      "book": "one-hundred-years",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "这里不曾有过死人",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 182748,
+          "chapter": "第十五章",
+          "ok": true
+        },
+        {
+          "quote": "自从你的亲戚奥雷连诺上校去世以来，马孔多啥事也没发生过",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 182762,
+          "chapter": "第十五章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-08",
+      "book": "one-hundred-years",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "等到小孩脱去乳牙以后，也许可以割掉这条无用的尾巴",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 248131,
+          "chapter": "第二十章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-09",
+      "book": "one-hundred-years",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "她就算过自己不小于一百一十五岁，但也不大于一百二十二岁",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 203668,
+          "chapter": "第十七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-10",
+      "book": "one-hundred-years",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "许多年前吉卜赛人曾把幻灯和飞毯带到马孔多",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 110141,
+          "chapter": "第十章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-11",
+      "book": "one-hundred-years",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "尖端有一撮毛的螺旋形软骨",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 11048,
+          "chapter": "第二章",
+          "ok": true
+        },
+        {
+          "quote": "竟然是一条猪尾巴",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 248031,
+          "chapter": "第二十章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-12",
+      "book": "one-hundred-years",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "雨，下了四年十一个月零两夭",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 186189,
+          "chapter": "第十六章",
+          "ok": true
+        },
+        {
+          "quote": "连根拔起了种植园最后剩下的几棵香蕉树",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 186307,
+          "chapter": "第十六章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-13",
+      "book": "one-hundred-years",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "买回一本梵文语法书",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 216861,
+          "chapter": "第十八章",
+          "ok": true
+        },
+        {
+          "quote": "用密码写成的诗",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 216968,
+          "chapter": "第十八章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-14",
+      "book": "one-hundred-years",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "将被飓风从地面上一扫而光",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 251677,
+          "chapter": "第二十章",
+          "ok": true
+        },
+        {
+          "quote": "遭受百年孤独的家族，往定不会在大地上第二次出现了",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 251722,
+          "chapter": "第二十章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-15",
+      "book": "one-hundred-years",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "这对孪生子是阿卡蒂奥枪毙之后过了五个月出世的",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 78216,
+          "chapter": "第七章",
+          "ok": true
+        },
+        {
+          "quote": "阿玛兰塔自愿照顾这几个孩子",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 78336,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-16",
+      "book": "one-hundred-years",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "他们拿绳子把他捆在树干上",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 46283,
+          "chapter": "第四章",
+          "ok": true
+        },
+        {
+          "quote": "看见窗外下起了细微的黄花雨",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 84516,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-17",
+      "book": "one-hundred-years",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "他叫毛里西奥·巴比洛尼亚",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 169238,
+          "chapter": "第十四章",
+          "ok": true
+        },
+        {
+          "quote": "子弹陷在他的脊柱里，使他躺在床上一直到死",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 173431,
+          "chapter": "第十四章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "gh-18",
+      "book": "one-hundred-years",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    },
+    {
+      "id": "gh-19",
+      "book": "one-hundred-years",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    },
+    {
+      "id": "gh-20",
+      "book": "one-hundred-years",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    },
+    {
+      "id": "rh-01",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "他只有靠钟表匠的手艺谋生",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 1278,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "成了御用钟表匠",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 1833,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-02",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "我俩一起被送到博赛，在朗贝尔西埃牧师家寄宿，学习拉丁文",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 5854,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-03",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "布罗格利夫人得知大使想找一名秘书，便推荐了我",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 199934,
+          "chapter": "第七章",
+          "ok": true
+        },
+        {
+          "quote": "可他只肯给一百皮斯托尔，还要我旅费自理",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 199997,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-04",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "这姑娘名叫泰蕾兹·勒瓦瑟尔，是个良家女子",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 225608,
+          "chapter": "第七章",
+          "ok": true
+        },
+        {
+          "quote": "其父曾在奥尔良造币厂供职，母亲经商",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 225629,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-05",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "阿内原是蒙特勒的一个农民，童年时便在汝拉山中采集植物，制作瑞士茶",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 119804,
+          "chapter": "第五章",
+          "ok": true
+        },
+        {
+          "quote": "他竟成了一名真正的植物学家",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 119888,
+          "chapter": "第五章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-06",
+      "book": "confessions",
+      "group": "fact",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "那是伯尔尼医院的产业，位于比埃纳湖中央",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 448714,
+          "chapter": "第四章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-07",
+      "book": "confessions",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "想偷他母亲的芦笋卖个时鲜",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 19821,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "我每天早上把长得最好的芦笋割下来，送到莫拉尔集市上去卖",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 19931,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-08",
+      "book": "confessions",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "我早就想到过用数字来记谱",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 186250,
+          "chapter": "第六章",
+          "ok": true
+        },
+        {
+          "quote": "竟能用我的数码极其准确地，而且可说是极其简单地把任何乐曲记录下来",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 186359,
+          "chapter": "第六章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-09",
+      "book": "confessions",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "一看这个题目，我顿时看到了另一个宇宙空间，仿佛变成了另一个人",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 240254,
+          "chapter": "第八章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-10",
+      "book": "confessions",
+      "group": "paraphrase",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "一张放在孩子的襁褓中，按照常规，由接生婆送到孤儿院去",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 235911,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-11",
+      "book": "confessions",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "其中有一把一边的齿全都断了",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 10020,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "对我第一次遭受的不公平对待的深沉的回忆与我的天性交织太久，太密",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 11327,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-12",
+      "book": "confessions",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "在乡村待了两年，我那罗马人的粗暴性格有所收敛",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 5907,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "圣皮埃尔岛在纳沙泰尔称为土岗岛，位于比埃纳湖中央",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 449254,
+          "chapter": "第四章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-13",
+      "book": "confessions",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "两年前，元帅大人①想把我写在他的遗嘱上",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 35986,
+          "chapter": "第二章",
+          "ok": true
+        },
+        {
+          "quote": "现在，他想给我一笔终身年金，我没有反对",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 36046,
+          "chapter": "第二章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-14",
+      "book": "confessions",
+      "group": "cross-chapter",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "普鲁塔克的《名人传》",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 3240,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "这是在特里布女租书商那儿所学不到的",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 64313,
+          "chapter": "第三章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-15",
+      "book": "confessions",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "我把铁扦——因为我师傅喜欢打猎——接上",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 20540,
+          "chapter": "第一章",
+          "ok": true
+        },
+        {
+          "quote": "我戳了好几次也没戳着",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 20560,
+          "chapter": "第一章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-16",
+      "book": "confessions",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "她请了一个缝洗女工",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 225562,
+          "chapter": "第七章",
+          "ok": true
+        },
+        {
+          "quote": "深为她那谦逊举止所打动，特别是她那有神而温柔的目光",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 225729,
+          "chapter": "第七章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-17",
+      "book": "confessions",
+      "group": "coref",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": false,
+      "quoteChecks": [
+        {
+          "quote": "我只是记录他口授的东西和抄抄写写",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 64235,
+          "chapter": "第三章",
+          "ok": true
+        },
+        {
+          "quote": "对我日后独自写作帮助甚大",
+          "exactMatch": true,
+          "normalizedMatch": true,
+          "charOffset": 64331,
+          "chapter": "第三章",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "id": "rh-18",
+      "book": "confessions",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    },
+    {
+      "id": "rh-19",
+      "book": "confessions",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    },
+    {
+      "id": "rh-20",
+      "book": "confessions",
+      "group": "no-answer",
+      "needsEvidence": true,
+      "isLongTask": false,
+      "noAnswer": true,
+      "quoteChecks": []
+    }
+  ]
+}

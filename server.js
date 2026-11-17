@@ -19,7 +19,9 @@ const llmClient = require('./llm-client');
 const { runTask, listTasks } = require('./orchestrator');
 const conv = require('./conversation');
 const requestStore = require('./request-store');
+const textUtils = require('./text-utils');
 const { createQaService } = require('./qa-service');
+const { createCredentialCrypto } = require('./credential-crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -50,6 +52,8 @@ async function startServer() {
         getProviderConfig, resolveApiKey, getBookContent
     });
     requestStore.interruptStaleRunning();
+    rag.recoverStaleBuilds();
+    conv.recoverStaleMemorySources();
 
 app.use(cors());
 app.use(express.json());
@@ -62,30 +66,9 @@ app.use('/api', authMiddleware);
 
 app.get('/api/auth/me', meHandler);
 
-function encrypt(text) {
-    const iv = crypto.randomBytes(16);
-    const key = Buffer.from(ENCRYPTION_KEY.slice(0, 64), 'hex');
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return iv.toString('hex') + ':' + encrypted;
-}
-
-function decrypt(encryptedData) {
-    try {
-        const parts = encryptedData.split(':');
-        const iv = Buffer.from(parts[0], 'hex');
-        const encrypted = parts[1];
-        const key = Buffer.from(ENCRYPTION_KEY.slice(0, 64), 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-        let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-        decrypted += decipher.final('utf8');
-        return decrypted;
-    } catch (error) {
-        console.error('解密失败:', error);
-        return null;
-    }
-}
+const credentialCrypto = createCredentialCrypto(ENCRYPTION_KEY);
+const encrypt = (text) => credentialCrypto.encrypt(text);
+const decrypt = (data) => credentialCrypto.decrypt(data);
 
 // 读取用户存储的某 provider 的 Key（仅查表 + 智谱/硅基流动 .env 兜底，不回退到通用 AI_API_KEY）
 function getStoredApiKey(userId, providerId) {
@@ -786,8 +769,8 @@ app.get('/api/books/:id', (req, res) => {
 
     if (row.format.toLowerCase() === 'txt') {
         try {
-            const content = readTextFileWithEncoding(filePath);
-            res.json({ book, content });
+            const content = textUtils.normalizeText(readTextFileWithEncoding(filePath));
+            res.json({ book, content, contentHash: textUtils.contentHash(content), chapters: textUtils.chapterDTOs(content) });
         } catch (error) {
             console.error('读取书籍内容失败:', error);
             res.status(500).json({ error: '读取书籍内容失败' });
@@ -795,6 +778,13 @@ app.get('/api/books/:id', (req, res) => {
     } else {
         res.json({ book, downloadUrl: `/api/books/${bookId}/download` });
     }
+});
+
+// 轻量内容元信息（P1b 引用跳转前复核权限与内容hash，避免整书下载）
+app.get('/api/books/:id/content-meta', (req, res) => {
+    const data = getBookContent(req.user.id, req.params.id);
+    if (!data) return res.status(404).json({ error: { code: 'RESOURCE_NOT_FOUND', message: '书籍不存在或无权访问', retryable: false } });
+    res.json({ bookId: req.params.id, supported: data.supported, contentHash: data.contentHash });
 });
 
 app.get('/api/books/:id/download', (req, res) => {
@@ -827,6 +817,8 @@ app.delete('/api/books/:id', (req, res) => {
             fs.unlinkSync(filePath);
         }
         db.prepare('DELETE FROM books_meta WHERE id = ? AND user_id = ?').run(bookId, req.user.id);
+        // 书级记忆标 expired、该书在途来源作废（不召回、不自动改 user 范围）
+        try { conv.onBookDeleted(req.user.id, bookId); } catch (e) { console.error('书级记忆清理异常:', e.message); }
         // 一并清理该书的 AI 任务结果缓存与 RAG 索引
         db.prepare('DELETE FROM task_results WHERE book_id = ? AND user_id = ?').run(bookId, req.user.id);
         try { rag.deleteIndex(req.user.id, bookId); } catch (e) {}
@@ -1010,42 +1002,75 @@ function resolveApiKey(userId, providerId) {
     return apiKey;
 }
 
-// 读取书籍全文（仅 TXT 支持智能索引/工具）
+// 读取书籍全文（仅 TXT 支持智能索引/工具）；P1b：返回规范文本 + contentHash + 章节
 function getBookContent(userId, bookId) {
     const row = db.prepare('SELECT * FROM books_meta WHERE id = ? AND user_id = ?').get(bookId, userId);
     if (!row) return null;
     const filePath = path.join(BOOKS_DIR, userId, row.filename);
     if (!fs.existsSync(filePath)) return null;
-    if (row.format.toLowerCase() !== 'txt') return { book: row, content: null, supported: false };
+    if (row.format.toLowerCase() !== 'txt') return { book: row, content: null, contentHash: null, chapters: [], supported: false };
     try {
-        const content = readTextFileWithEncoding(filePath);
-        return { book: row, content, supported: true };
+        const content = textUtils.normalizeText(readTextFileWithEncoding(filePath));
+        return { book: row, content, contentHash: textUtils.contentHash(content), chapters: textUtils.chapterDTOs(content), supported: true };
     } catch (e) {
         return null;
     }
 }
 
-// RAG 索引状态
+// RAG 索引状态（P1b 视图：usable/active/build/rebuildRequired）
 app.get('/api/books/:id/index-status', (req, res) => {
-    res.json(rag.getIndexStatus(req.user.id, req.params.id));
+    const data = getBookContent(req.user.id, req.params.id);
+    res.json(rag.getIndexStatus(req.user.id, req.params.id, data && data.supported ? data.contentHash : null));
 });
 
-// 触发 RAG 索引
+// 触发 RAG 索引（版本化构建；同书互斥 409；断开传播取消）
 app.post('/api/books/:id/index', async (req, res) => {
     const bookId = req.params.id;
     const data = getBookContent(req.user.id, bookId);
-    if (!data) return res.status(404).json({ error: '书籍不存在或无法读取' });
-    if (!data.supported) return res.status(400).json({ error: '当前仅支持 TXT 格式的智能索引' });
+    if (!data) return res.status(404).json({ error: { code: 'RESOURCE_NOT_FOUND', message: '书籍不存在或无法读取', retryable: false } });
+    if (!data.supported) return res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '当前仅支持 TXT 格式的智能索引', retryable: false } });
 
-    // 按用户 Embedding 设置解析向量化提供商（不可用则纯 BM25）
+    // 可选分块参数（P3 实验用；服务端校验范围）
+    let chunkerConfig = null;
+    if (req.body && req.body.chunker) {
+        const c = req.body.chunker;
+        const targetSize = Number(c.targetSize), longThreshold = Number(c.longThreshold), overlap = Number(c.overlap);
+        if (!Number.isInteger(targetSize) || !Number.isInteger(longThreshold) || !Number.isInteger(overlap) ||
+            targetSize < 100 || targetSize > 2000 || longThreshold < targetSize || longThreshold > 4000 || overlap < 0 || overlap >= targetSize) {
+            return res.status(400).json({ error: { code: 'INVALID_REQUEST', message: '分块参数非法（targetSize 100~2000，longThreshold≥targetSize 且≤4000，overlap<targetSize）', retryable: false } });
+        }
+        chunkerConfig = { targetSize, longThreshold, overlap };
+    }
+
     const embedder = embeddingMod.resolveEmbedder(req.user.id);
+    const controller = new AbortController();
+    let normallyEnded = false;
+    const onClose = () => { if (!normallyEnded && !res.writableEnded) controller.abort(); };
+    res.on('close', onClose);
     try {
         const result = await rag.indexBook({
-            bookId, userId: req.user.id, content: data.content, embedder
+            bookId, userId: req.user.id, content: data.content, embedder,
+            signal: controller.signal, chunkerConfig,
+            getCurrentContentHash: () => { const d = getBookContent(req.user.id, bookId); return d && d.supported ? d.contentHash : null; }
         });
-        res.json({ success: true, ...result });
+        normallyEnded = true;
+        const view = rag.getIndexStatus(req.user.id, bookId, data.contentHash);
+        res.json({ success: result.published, ...view, warnings: result.warnings || [], ...(result.embedError ? { embedError: result.embedError } : {}) });
     } catch (e) {
-        res.status(500).json({ error: `索引失败: ${e.message}` });
+        normallyEnded = true;
+        if (e.code === 'INDEX_BUILD_RUNNING') {
+            return res.status(409).json({ error: { code: 'INDEX_BUILD_RUNNING', message: e.message, retryable: true } });
+        }
+        if (e.code === 'EMPTY_CONTENT') {
+            return res.status(400).json({ error: { code: 'EMPTY_CONTENT', message: e.message, retryable: false } });
+        }
+        if (e.name === 'AbortError' || e.code === 'CANCELLED' || e.code === 'BUILD_INVALIDATED') {
+            const view = rag.getIndexStatus(req.user.id, bookId, data.contentHash);
+            return res.status(499).json({ error: { code: 'CANCELLED', message: '索引构建已取消', retryable: true }, ...view });
+        }
+        res.status(500).json({ error: { code: e.code || 'BUILD_FAILED', message: `索引失败: ${e.message}`, retryable: true } });
+    } finally {
+        res.removeListener('close', onClose);
     }
 });
 
@@ -1178,15 +1203,22 @@ app.post('/api/conversations', (req, res) => {
     });
 });
 
-// 获取会话消息（用于前端回显；默认仅返回工作窗口内消息）
+// 获取会话消息（SC-1.1 §4.2：默认返回全部可见消息，含 metadata 供引用恢复；?window=1 仅工作窗口）
 app.get('/api/conversations/:id/messages', (req, res) => {
     const c = conv.getConversation(req.user.id, req.params.id);
     if (!c) return res.status(404).json({ error: '会话不存在' });
-    const windowOnly = req.query.all !== '1';
+    const windowOnly = req.query.window === '1';
     const rows = conv.getConversationMessages(c.id, { windowOnly });
     const messages = rows
         .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => ({ role: m.role, content: m.content, seq: m.seq, inWindow: !!m.in_window, createdAt: m.created_at }));
+        .map(m => {
+            let metadata = null;
+            try { metadata = m.metadata ? JSON.parse(m.metadata) : null; } catch {}
+            return {
+                id: m.id, requestId: m.request_id || null, role: m.role, content: m.content,
+                status: m.status || 'completed', seq: m.seq, inWindow: !!m.in_window, createdAt: m.created_at, metadata
+            };
+        });
     res.json({
         conversation: { id: c.id, title: c.title, summary: c.summary, tokenEstimate: c.token_estimate, model: c.model, contextLimit: conv.getModelContextLimit(c.model) },
         messages
@@ -1211,28 +1243,79 @@ app.post('/api/conversations/:id/compress', async (req, res) => {
     }
 });
 
-// 删除会话
+// 删除会话：先建立记忆屏障（旧来源防回写），再删会话；已保存记忆保留、来源不可用
 app.delete('/api/conversations/:id', (req, res) => {
     const c = conv.getConversation(req.user.id, req.params.id);
     if (!c) return res.status(404).json({ error: '会话不存在' });
+    try { conv.onConversationDeleted(req.user.id, req.params.id); } catch (e) {
+        if (e instanceof conv.MemoryError) return res.status(e.status).json({ error: { code: e.code, message: e.message, retryable: false } });
+        throw e;
+    }
     conv.deleteConversation(req.user.id, req.params.id);
     res.json({ success: true });
 });
 
-// ==================== Memory Routes (长期记忆) ====================
+// ==================== Memory Routes (P2 治理，SC §8.4) ====================
+
+function memoryRouteError(res, e) {
+    if (e instanceof conv.MemoryError) {
+        return res.status(e.status).json({ error: { code: e.code, message: e.message, retryable: false } });
+    }
+    console.error('记忆操作异常:', e.message);
+    return res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: '记忆操作失败', retryable: false } });
+}
 
 app.get('/api/memories', (req, res) => {
-    res.json({ memories: conv.listMemories(req.user.id) });
+    try {
+        const memories = conv.listMemoriesView(req.user.id, { bookId: req.query.bookId || undefined, status: req.query.status || undefined });
+        res.json({ memories, epoch: conv.getMemorySettings(req.user.id).epoch });
+    } catch (e) { memoryRouteError(res, e); }
+});
+
+app.put('/api/memories/:id', (req, res) => {
+    try {
+        const { expectedRevision, content } = req.body || {};
+        res.json(conv.editMemory(req.user.id, Number(req.params.id), { expectedRevision, content }));
+    } catch (e) { memoryRouteError(res, e); }
+});
+
+app.post('/api/memories/:id/confirm', (req, res) => {
+    try {
+        const { expectedRevision, expectedEpoch, classification } = req.body || {};
+        res.json(conv.confirmMemory(req.user.id, Number(req.params.id), { expectedRevision, expectedEpoch, classification }));
+    } catch (e) { memoryRouteError(res, e); }
+});
+
+app.post('/api/memories/:id/complete', (req, res) => {
+    try {
+        const { expectedRevision } = req.body || {};
+        res.json(conv.completeMemory(req.user.id, Number(req.params.id), { expectedRevision }));
+    } catch (e) { memoryRouteError(res, e); }
 });
 
 app.delete('/api/memories/:id', (req, res) => {
-    conv.deleteMemory(req.user.id, Number(req.params.id));
-    res.json({ success: true });
+    try {
+        const { expectedRevision } = req.body || {};
+        res.json(conv.deleteMemory(req.user.id, Number(req.params.id), { expectedRevision }));
+    } catch (e) { memoryRouteError(res, e); }
 });
 
 app.delete('/api/memories', (req, res) => {
-    conv.deleteAllMemories(req.user.id);
-    res.json({ success: true });
+    try {
+        const { expectedEpoch } = req.body || {};
+        res.json(conv.clearMemories(req.user.id, { expectedEpoch }));
+    } catch (e) { memoryRouteError(res, e); }
+});
+
+app.get('/api/memory-settings', (req, res) => {
+    res.json(conv.getMemorySettings(req.user.id));
+});
+
+app.put('/api/memory-settings', (req, res) => {
+    try {
+        const { enabled, expectedEpoch } = req.body || {};
+        res.json(conv.setMemoryEnabled(req.user.id, { enabled, expectedEpoch }));
+    } catch (e) { memoryRouteError(res, e); }
 });
 
 app.get('*', (req, res) => {

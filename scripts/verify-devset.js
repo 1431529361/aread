@@ -1,7 +1,7 @@
 /**
- * 开发集金标准校验（只读）：逐条验证 goldQuote 是本地原文精确子串，
+ * 开发集/保留集金标准校验（只读）：逐条验证 goldQuote 是本地原文精确子串，
  * 记录字符偏移与所在章节，输出可追溯报告。任何 MISS 都以非零退出码结束。
- * 用法：node scripts/verify-devset.js
+ * 用法：node scripts/verify-devset.js [数据集路径] [输出路径]
  */
 const fs = require('fs');
 const path = require('path');
@@ -20,7 +20,7 @@ function chapterAt(text, index) {
 }
 
 function main() {
-    const ds = JSON.parse(fs.readFileSync(path.join(BASELINE, 'dev-rag-questions.json'), 'utf-8'));
+    const ds = JSON.parse(fs.readFileSync(process.argv[2] ? path.resolve(process.argv[2]) : path.join(BASELINE, 'dev-rag-questions.json'), 'utf-8'));
     const bookTexts = {};
     for (const [id, rel] of Object.entries(ds.books)) {
         bookTexts[id] = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8');
@@ -73,7 +73,7 @@ function main() {
         allQuotesVerified: miss === 0,
         results
     };
-    fs.writeFileSync(path.join(BASELINE, 'devset-verification.json'), JSON.stringify(report, null, 2), 'utf-8');
+    fs.writeFileSync(process.argv[3] ? path.resolve(process.argv[3]) : path.join(BASELINE, 'devset-verification.json'), JSON.stringify(report, null, 2), 'utf-8');
     console.log(`题目数: ${ds.questions.length}（按组: ${JSON.stringify(byGroup)}）`);
     console.log(`金标准引文: ${totalQuotes} 条，未命中: ${miss}`);
     console.log(`校验结果: ${miss === 0 ? '全部通过' : '存在未命中，需修正'}`);

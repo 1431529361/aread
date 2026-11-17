@@ -11,6 +11,7 @@ function defaultState() {
     return {
         chatReply: '这是本地假模型的确定性回答。',
         streamChunks: ['这是', '本地假模型', '的确定性回答。'],
+        reasoning: '',
         extraction: '[]',
         summary: '摘要：本地假模型生成的会话摘要。',
         toolScript: null,
@@ -19,6 +20,7 @@ function defaultState() {
         toolHttpError: null,
         cutStreamAfter: null,
         embedError: null,
+        embedMutate: null,
         rerankError: null,
         latencyMs: 0
     };
@@ -45,10 +47,16 @@ function lastUserContent(body) {
 
 function pickReply(body, state) {
     const content = lastUserContent(body);
-    if (content.includes('记忆抽取器')) return state.extraction;
-    if (content.includes('压缩为简洁的要点摘要')) return state.summary;
+    if (content.includes('记忆抽取器')) {
+        // 新契约：prompt 含 [消息ID=n] 来源标记；模板用 "__SOURCE_ID__"/__SOURCE_IDS__ 占位
+        const ids = [...content.matchAll(/\[消息ID=(\d+)\]/g)].map(m => Number(m[1]));
+        return String(state.extraction)
+            .replace(/"__SOURCE_ID__"/g, String(ids[0] ?? 0))
+            .replace(/__SOURCE_IDS__/g, JSON.stringify(ids));
+    }
+    if (content.includes('压缩为结构化摘要')) return state.summary;
     const toolMsgCount = (body.messages || []).filter(m => m.role === 'tool').length;
-    if (toolMsgCount > 0) return state.finalAfterTools;
+    if (toolMsgCount > 0 || content.includes('本轮可引用的原文证据')) return state.finalAfterTools;
     return state.chatReply;
 }
 
@@ -89,9 +97,17 @@ function startFakeModelServer() {
                     return res.end(JSON.stringify(state.embedError.body || { error: { message: 'fake embed error' } }));
                 }
                 const texts = body.input || [];
+                const data = texts.map((t, i) => ({ index: i, embedding: embedText(t) }));
+                // 测试注入：维度错/非法数值/重复index/缺失index/乱序（带正确index）
+                const m = state.embedMutate;
+                if (m === 'dim' && data.length > 1) data[1].embedding = data[1].embedding.slice(0, 1023);
+                if (m === 'nan' && data.length > 1) data[1].embedding[5] = null;
+                if (m === 'dupIndex' && data.length > 1) data[1].index = 0;
+                if (m === 'missingIndex' && data.length > 1) delete data[1].index;
+                if (m === 'shuffle') data.reverse();
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({
-                    data: texts.map((t, i) => ({ index: i, embedding: embedText(t) })),
+                    data,
                     model: body.model || 'fake-embed',
                     usage: { prompt_tokens: texts.join('').length, total_tokens: texts.join('').length }
                 }));
@@ -127,17 +143,26 @@ function startFakeModelServer() {
                 const script = state.toolScript;
                 if (body.tools && script && toolMsgCount < script.length) {
                     const step = script[toolMsgCount];
+                    const toolCall = {
+                        id: `call_${toolMsgCount + 1}`,
+                        type: 'function',
+                        function: { name: step.name, arguments: step.rawArguments !== undefined ? step.rawArguments : JSON.stringify(step.args || {}) }
+                    };
+                    if (body.stream) {
+                        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+                        if (step.thought) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: step.thought } }] })}\n\n`);
+                        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, ...toolCall }] } }] })}\n\n`);
+                        res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`);
+                        res.write('data: [DONE]\n\n');
+                        return res.end();
+                    }
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({
                         choices: [{
                             message: {
                                 role: 'assistant',
                                 content: step.thought || null,
-                                tool_calls: [{
-                                    id: `call_${toolMsgCount + 1}`,
-                                    type: 'function',
-                                    function: { name: step.name, arguments: step.rawArguments !== undefined ? step.rawArguments : JSON.stringify(step.args || {}) }
-                                }]
+                                tool_calls: [toolCall]
                             },
                             finish_reason: 'tool_calls'
                         }],
@@ -152,6 +177,12 @@ function startFakeModelServer() {
                         'Cache-Control': 'no-cache',
                         'Connection': 'keep-alive'
                     });
+                    if (state.reasoning) {
+                        const r = String(state.reasoning);
+                        for (let i = 0; i < r.length; i += 40) {
+                            res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: r.slice(i, i + 40) } }] })}\n\n`);
+                        }
+                    }
                     const chunks = state.streamChunks && state.streamChunks.length
                         ? state.streamChunks
                         : [reply];
@@ -170,7 +201,7 @@ function startFakeModelServer() {
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({
-                    choices: [{ message: { role: 'assistant', content: reply }, finish_reason: 'stop' }],
+                    choices: [{ message: { role: 'assistant', content: reply, reasoning_content: state.reasoning || undefined }, finish_reason: 'stop' }],
                     usage: { prompt_tokens: 10, completion_tokens: reply.length, total_tokens: 10 + reply.length }
                 }));
             }

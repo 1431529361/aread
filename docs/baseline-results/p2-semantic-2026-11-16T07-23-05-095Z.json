@@ -1,0 +1,33 @@
+{
+  "runId": "p2-semantic-2026-11-16T07-23-05-095Z",
+  "model": "qwen3.8-flash",
+  "vecCount": 1,
+  "activeMemories": [
+    {
+      "id": 1,
+      "key": "fact.role",
+      "kind": "fact"
+    }
+  ],
+  "results": [
+    {
+      "question": "我该如何分析《忏悔录》的自传真实性？",
+      "expectKey": "fact.role",
+      "expectPresent": true,
+      "present": true,
+      "pass": true,
+      "refKeys": [
+        "fact.role"
+      ]
+    },
+    {
+      "question": "时间跳跃手法还是没懂，能再讲讲吗",
+      "expectKey": "fact.role",
+      "expectPresent": false,
+      "present": false,
+      "pass": true,
+      "refKeys": []
+    }
+  ],
+  "pass": true
+}

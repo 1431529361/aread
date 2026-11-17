@@ -52,8 +52,12 @@ async function runAgentLoop(opts) {
     const signal = opts.signal || null;
     const deadlineAt = opts.deadlineAt || null;
     const toolSchemas = toolRegistry.getToolSchemas();
-    // 工具只接收授权上下文，不含模型凭据
-    const toolContext = { bookId: context.bookId, userId: context.userId, content: context.content };
+    // 工具只接收授权上下文，不含模型凭据；contentHash/chapters 供 P1b 定位
+    const toolContext = {
+        bookId: context.bookId, userId: context.userId, content: context.content,
+        contentHash: context.contentHash || null, chapters: context.chapters || null,
+        signal, deadlineAt
+    };
 
     const messages = Array.isArray(opts.messages) && opts.messages.length > 0
         ? [...opts.messages]
@@ -81,9 +85,12 @@ async function runAgentLoop(opts) {
         if (signal && signal.aborted) { const e = new Error('已取消'); e.name = 'AbortError'; throw e; }
         let resp;
         try {
-            resp = await llmClient.chat(ctx, {
+            // 决策轮真流式：思考增量独立下发；正文增量先按"暂定答案"直播，若本轮以工具调用结束再收回
+            resp = await llmClient.stream(ctx, {
                 messages, tools: toolSchemas, toolChoice: 'auto',
-                temperature: 0.3, maxTokens: 1500, timeoutMs: 90000, retries: 1, signal, deadlineAt
+                temperature: 0.3, maxTokens: 4000, timeoutMs: 90000, signal, deadlineAt,
+                onReasoning: (c) => onEvent({ type: 'reasoning_chunk', content: c, iteration: iter }),
+                onChunk: (c) => onEvent({ type: 'answer_chunk', content: c, iteration: iter })
             });
             llmCallCount++;
             addUsage(resp.usage);
@@ -96,10 +103,13 @@ async function runAgentLoop(opts) {
             }
             throw e;
         }
+        if (resp.interrupted) {
+            throw Object.assign(new Error('上游流中断'), { name: 'InterruptedError', partialContent: resp.content });
+        }
 
         const toolCalls = resp.toolCalls || [];
         if (!toolCalls.length || resp.finishReason === 'stop') {
-            // 无工具调用 → 决策轮内容即最终答案草稿（由问答服务门控后发射）
+            // 无工具调用 → 决策轮内容即最终答案（已流式直播）
             trace.push({ iteration: iter, type: 'answer', content: resp.content });
             return {
                 route: hadTools ? 'tools' : 'direct', content: resp.content || '',
@@ -110,6 +120,8 @@ async function runAgentLoop(opts) {
 
         hadTools = true;
         if (resp.content) {
+            // 本轮以工具结束：已直播的暂定正文收回，归入思考展示
+            onEvent({ type: 'answer_retract', iteration: iter });
             trace.push({ iteration: iter, type: 'thought', content: resp.content });
         }
         messages.push({ role: 'assistant', content: resp.content || null, tool_calls: toolCalls.map(tc => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })) });
@@ -142,7 +154,7 @@ async function runAgentLoop(opts) {
                 for (const c of result.candidates) evidenceCandidates.push({ ...c, iteration: iter, tool: toolName });
             }
             trace.push({ iteration: iter, type: 'tool', name: toolName, args, elapsed, status: result.status });
-            onEvent({ type: 'tool_result', callId: tc.id, name: toolName, status: result.status, returnedCount: (result.candidates || []).length, truncated: !!result.truncated, elapsedMs: elapsed, error: result.error || null });
+            onEvent({ type: 'tool_result', callId: tc.id, name: toolName, status: result.status, returnedCount: (result.candidates || []).length, truncated: !!result.truncated, elapsedMs: elapsed, error: result.error || null, source: (result.data && result.data.source) || null });
 
             const { str } = trimToolResultForMessage(result);
             messages.push({ role: 'tool', tool_call_id: tc.id, content: str });

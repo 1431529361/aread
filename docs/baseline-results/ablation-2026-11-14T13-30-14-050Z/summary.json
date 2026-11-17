@@ -1,0 +1,72 @@
+{
+  "runId": "ablation-2026-11-14T13-30-14-050Z",
+  "embedModel": "BAAI/bge-m3",
+  "rerankModel": "BAAI/bge-reranker-v2-m3",
+  "bookHashes": {
+    "one-hundred-years": "cd3ef3be0d5ee2c27d7e9aa11396d606310550b7b82348231c456c28bffae01e",
+    "confessions": "2a9f2b6bf3f4419a922577aa81450fc12b57922c3d80f78c8e76235fac12b0df"
+  },
+  "conditions": {
+    "bm25": {
+      "answerable": 16,
+      "hitAt5": 0.5625,
+      "evidenceRecallAt5": 0.5,
+      "mrrAt5": 0.48125,
+      "latencyP50": 4,
+      "latencyP95": 305,
+      "indexModes": {
+        "one-hundred-years": {
+          "mode": "bm25",
+          "chunkCount": 635,
+          "success": true
+        },
+        "confessions": {
+          "mode": "bm25",
+          "chunkCount": 1167,
+          "success": true
+        }
+      }
+    },
+    "hybrid": {
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "evidenceRecallAt5": 0.59375,
+      "mrrAt5": 0.5125,
+      "latencyP50": 126,
+      "latencyP95": 435,
+      "indexModes": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunkCount": 635,
+          "success": true
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunkCount": 1167,
+          "success": true
+        }
+      }
+    },
+    "hybrid+rerank": {
+      "answerable": 16,
+      "hitAt5": 0.8125,
+      "evidenceRecallAt5": 0.65625,
+      "mrrAt5": 0.7,
+      "latencyP50": 297,
+      "latencyP95": 336,
+      "indexModes": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunkCount": 635,
+          "success": true
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunkCount": 1167,
+          "success": true
+        }
+      }
+    }
+  },
+  "finishedAt": "2026-11-14T13:31:16.819Z"
+}

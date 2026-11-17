@@ -357,10 +357,14 @@ async function main() {
     }
 
     // ---- 记忆脚本 ----
+    async function clearMemories(token) {
+        const st = (await api(srv.url, '/api/memory-settings', { token })).data;
+        return api(srv.url, '/api/memories', { method: 'DELETE', token, body: { expectedEpoch: st.epoch } });
+    }
     async function memoryBaseline() {
         await indexAll('on');
         for (const s of mem.scripts) {
-            await api(srv.url, '/api/memories', { method: 'DELETE', token: user.token });
+            await clearMemories(user.token);
             const bookId = bookIds[s.book];
             const newConv = await api(srv.url, '/api/conversations', { method: 'POST', token: user.token, body: { bookId } });
             let convId = newConv.data.conversation.id;
@@ -379,11 +383,11 @@ async function main() {
                 const c2 = await api(srv.url, '/api/conversations', { method: 'POST', token: user.token, body: { bookId: b2 } });
                 for (const t of s.turns2 || []) await sendTurn(t, c2.data.conversation.id);
             }
-            // 等待异步抽取
-            await new Promise(r => setTimeout(r, 1500));
+            // 等待异步抽取（新治理后台串行，真实模型可能较久）
+            await new Promise(r => setTimeout(r, 8000));
             let memories = (await api(srv.url, '/api/memories', { token: user.token })).data.memories || [];
             if (s.action === 'deleteAllMemories') {
-                await api(srv.url, '/api/memories', { method: 'DELETE', token: user.token });
+                await clearMemories(user.token);
                 memories = (await api(srv.url, '/api/memories', { token: user.token })).data.memories || [];
             }
             // 断言检查
@@ -400,7 +404,7 @@ async function main() {
             for (const p of s.probes || []) {
                 const pc = await api(srv.url, '/api/conversations', { method: 'POST', token: user.token, body: { bookId } });
                 const onResp = await streamCall(srv.url, '/api/ask-stream', { token: user.token, body: { question: p.question, bookId, provider: providerId, model, conversationId: pc.data.conversation.id } });
-                await api(srv.url, '/api/memories', { method: 'DELETE', token: user.token });
+                await clearMemories(user.token);
                 const pc2 = await api(srv.url, '/api/conversations', { method: 'POST', token: user.token, body: { bookId } });
                 const offResp = await streamCall(srv.url, '/api/ask-stream', { token: user.token, body: { question: p.question, bookId, provider: providerId, model, conversationId: pc2.data.conversation.id } });
                 probes.push({ question: p.question, expect: p.expect, memoryOnAnswer: onResp.answer, memoryOffAnswer: offResp.answer });

@@ -121,9 +121,7 @@
                         </div>
 
                         <div class="provider-tabs" id="providerTabs">
-                            <button class="provider-tab active" data-provider="zhipu">智谱AI</button>
-                            <button class="provider-tab" data-provider="siliconflow">硅基流动</button>
-                            <button class="provider-tab" data-provider="custom">+ 自定义</button>
+                            <button class="provider-tab active" data-provider="custom">+ 自定义</button>
                         </div>
 
                         <div class="api-key-status" id="apiKeyStatus">
@@ -147,14 +145,14 @@
 
                         <div class="api-key-form">
                             <div class="form-group">
-                                <label id="apiKeyLabel" for="apiKeyInput">智谱AI API密钥</label>
+                                <label id="apiKeyLabel" for="apiKeyInput">API密钥</label>
                                 <div class="input-wrapper">
                                     <input type="password" id="apiKeyInput" class="api-key-input" placeholder="请输入您的API密钥">
                                     <button class="toggle-visibility-btn" id="toggleVisibilityBtn" title="显示/隐藏密钥">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                                     </button>
                                 </div>
-                                <p class="form-hint" id="apiKeyHint">获取API密钥：访问 <a href="https://open.bigmodel.cn/" target="_blank">智谱AI开放平台</a></p>
+                                <p class="form-hint" id="apiKeyHint">OpenAI 兼容端点：在下方添加自定义提供商（Base URL + 密钥 + 模型）</p>
                             </div>
                             <div class="form-group" id="modelSelectGroup" style="display:none">
                                 <label for="modelSelect">选择模型</label>
@@ -605,9 +603,15 @@
             <div class="memory-modal-card">
                 <div class="memory-modal-header">
                     <h3>🧠 AI 记忆</h3>
-                    <button class="memory-modal-close" id="memoryModalClose">✕</button>
+                    <div class="memory-header-actions">
+                        <label class="memory-pause-toggle" title="暂停后不再自动保存与召回，仍可管理现有记忆"><input type="checkbox" id="memoryEnabledToggle" checked> 自动记忆</label>
+                        <button class="memory-modal-close" id="memoryModalClose">✕</button>
+                    </div>
                 </div>
-                <p class="memory-modal-desc">AI 从你的对话中记住的偏好与信息，会在后续对话中被参考。你可以随时删除。</p>
+                <p class="memory-modal-desc">只从你本人的表达中保存有来源的信息，可确认、更正、完成、删除或暂停。删除记忆不会删除聊天原话；旧来源不会再写回已删除的记忆。</p>
+                <div id="memoryPausedBanner" class="memory-banner" style="display:none">自动记忆已暂停：不再写入与召回。你仍可查看、编辑、删除现有记忆。</div>
+                <div id="memoryLegacyBanner" class="memory-banner memory-banner-warn" style="display:none">历史记忆需确认分类后才会参与新回答。</div>
+                <div id="memoryError" class="memory-error" style="display:none"></div>
                 <div class="memory-list" id="memoryList"></div>
                 <div class="memory-modal-footer">
                     <button class="session-btn" id="memoryClearAllBtn">清空全部记忆</button>

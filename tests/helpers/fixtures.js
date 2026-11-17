@@ -39,13 +39,14 @@ const SAME_TITLE_DIFF_CONTENT = `第一章 另一本书
 // 含 HTML/脚本的文本（验证前端只渲染文字，不执行）
 const HTML_INJECTION_TEXT = '正常文本<img src=x onerror="window.__p0_xss=1"><script>window.__p0_xss=2</script>结束';
 
-// 记忆抽取注入样本：非法 kind + HTML content（5 条 = 单次抽取上限 MAX_MEMORY_PER_EXTRACT）
+// 记忆抽取注入样本（P2 新契约）：非法 kind 应被拒绝（不写入），合法候选正常入库；
+// "__SOURCE_ID__" 由假模型服务替换为 prompt 中真实来源消息ID。
 const MALICIOUS_EXTRACTION = JSON.stringify([
-    { kind: 'preference', content: '用户偏好分点回答', salience: 0.9 },
-    { kind: '<img src=x onerror=window.__p0_xss=1>', content: '非法kind样本', salience: 0.8 },
-    { kind: 'FACT', content: '大写kind样本', salience: 0.7 },
-    { kind: 123, content: '数字kind样本', salience: 0.6 },
-    { kind: 'interest', content: HTML_INJECTION_TEXT, salience: 0.9 }
+    { kind: 'preference', key: 'preference.answer_format', normalizedValue: 'bullets', content: '用户偏好分点回答', scope: 'user', sourceMessageId: '__SOURCE_ID__', sourceRange: { start: 0, end: 7 }, statementType: 'explicit', stability: 'stable', relation: 'independent' },
+    { kind: '<img src=x onerror=window.__p0_xss=1>', key: 'fact.role', normalizedValue: '非法kind样本', content: '非法kind样本', scope: 'user', sourceMessageId: '__SOURCE_ID__', sourceRange: { start: 0, end: 7 }, statementType: 'explicit', stability: 'stable', relation: 'independent' },
+    { kind: 'FACT', key: 'fact.role', normalizedValue: '大写kind样本', content: '大写kind样本', scope: 'user', sourceMessageId: '__SOURCE_ID__', sourceRange: { start: 0, end: 7 }, statementType: 'explicit', stability: 'stable', relation: 'independent' },
+    { kind: 123, key: 'fact.role', normalizedValue: '数字kind样本', content: '数字kind样本', scope: 'user', sourceMessageId: '__SOURCE_ID__', sourceRange: { start: 0, end: 7 }, statementType: 'explicit', stability: 'stable', relation: 'independent' },
+    { kind: 'interest', key: 'interest.topic:xss', normalizedValue: 'xss', content: HTML_INJECTION_TEXT, scope: 'user', sourceMessageId: '__SOURCE_ID__', sourceRange: { start: 0, end: 7 }, statementType: 'explicit', stability: 'stable', relation: 'independent' }
 ]);
 
 module.exports = {

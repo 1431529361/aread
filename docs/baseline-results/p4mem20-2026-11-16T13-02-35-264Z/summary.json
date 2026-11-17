@@ -1,0 +1,39 @@
+{
+  "runId": "p4mem20-2026-11-16T13-02-35-264Z",
+  "model": "qwen3.8-flash",
+  "suite": "extract",
+  "scripts": 1,
+  "turns": 3,
+  "errors": 0,
+  "savedTotal": 1,
+  "savedMatched": 1,
+  "goldTotal": 1,
+  "goldMatched": 1,
+  "probeTotal": 0,
+  "misinject": 0,
+  "misinjectProbes": 0,
+  "compliancePass": 0,
+  "complianceTotal": 0,
+  "scheduledTurns": 3,
+  "extractDone": 3,
+  "extractFailed": 0,
+  "checks": [
+    {
+      "id": "h2-20",
+      "check": "maxExtractionCalls<=2",
+      "pass": false,
+      "actual": 3
+    }
+  ],
+  "precision": 1,
+  "recall": 1,
+  "misinjectRate": null,
+  "complianceRate": null,
+  "extractLatencyP50": 38450,
+  "scheduledRatio": 1,
+  "thresholdExperiment": null,
+  "layers": null,
+  "checksPass": 0,
+  "checksTotal": 1,
+  "finishedAt": "2026-11-16T13:08:15.645Z"
+}

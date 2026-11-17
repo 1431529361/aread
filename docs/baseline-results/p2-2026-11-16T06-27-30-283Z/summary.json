@@ -1,0 +1,39 @@
+{
+  "runId": "p2-2026-11-16T06-27-30-283Z",
+  "model": "qwen3.8-flash",
+  "suite": "extract",
+  "scripts": 2,
+  "turns": 3,
+  "errors": 0,
+  "savedTotal": 3,
+  "savedMatched": 3,
+  "goldTotal": 3,
+  "goldMatched": 3,
+  "probeTotal": 1,
+  "misinject": 0,
+  "misinjectProbes": 0,
+  "compliancePass": 0,
+  "complianceTotal": 1,
+  "scheduledTurns": 3,
+  "extractDone": 2,
+  "extractFailed": 0,
+  "checks": [
+    {
+      "id": "p2mem-02",
+      "check": "maxEntries:preference.answer_format",
+      "pass": true,
+      "actual": 1
+    }
+  ],
+  "precision": 1,
+  "recall": 1,
+  "misinjectRate": null,
+  "complianceRate": 0,
+  "extractLatencyP50": 42551,
+  "scheduledRatio": 1,
+  "thresholdExperiment": null,
+  "layers": null,
+  "checksPass": 1,
+  "checksTotal": 1,
+  "finishedAt": "2026-11-16T06:29:40.150Z"
+}

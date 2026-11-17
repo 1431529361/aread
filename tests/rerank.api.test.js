@@ -56,9 +56,9 @@ test('ER-01 自定义Embedding端点建库为 embedding+bm25', async () => {
     assert.strictEqual(res.status, 200, res.text);
     assert.strictEqual(res.data.active.providerId, 'custom');
     const idx = await api(srv.url, `/api/books/${book.id}/index`, { method: 'POST', token: user.token, body: {} });
-    assert.strictEqual(idx.data.mode, 'embedding+bm25');
+    assert.strictEqual(idx.data.active.mode, 'embedding+bm25');
     const status = await api(srv.url, `/api/books/${book.id}/index-status`, { token: user.token });
-    assert.strictEqual(status.data.embedProvider, 'custom');
+    assert.strictEqual(status.data.active.mode, 'embedding+bm25');
 });
 
 test('ER-02 启用重排后检索来源含 +rerank', async () => {
@@ -68,15 +68,15 @@ test('ER-02 启用重排后检索来源含 +rerank', async () => {
     });
     assert.strictEqual(res.status, 200, res.text);
     assert.ok(res.data.active, '重排应生效');
-    const { evidence } = await agentSearch('青色灯塔的守塔人是谁');
-    assert.ok(evidence.some(e => /rerank/.test(e.method)), `证据方法应含rerank: ${evidence.map(e => e.method)}`);
+    const { evidence, toolResult } = await agentSearch('青色灯塔的守塔人是谁');
+    assert.ok(toolResult && /\+rerank/.test(toolResult.source || ''), `检索来源应含+rerank: ${toolResult && toolResult.source}`);
     assert.ok(evidence.length > 0);
 });
 
 test('ER-03 重排失败保留融合结果并给出warning', async () => {
     await fake.control({ rerankError: { status: 500, body: { error: { message: 'fake rerank outage' } } } });
     const { evidence, toolResult } = await agentSearch('青色灯塔的守塔人是谁');
-    assert.ok(!evidence.some(e => /rerank/.test(e.method)), '重排失败不应标rerank');
+    assert.ok(toolResult && !/\+rerank/.test(toolResult.source || ''), '重排失败不应标rerank');
     assert.ok(evidence.length > 0, '重排失败仍应返回融合结果');
     assert.ok(toolResult && toolResult.status === 'ok', '检索仍成功');
     await fake.control({ rerankError: null });
@@ -84,8 +84,8 @@ test('ER-03 重排失败保留融合结果并给出warning', async () => {
 
 test('ER-04 关闭重排后检索不调用重排（消融条件）', async () => {
     await api(srv.url, '/api/rerank-settings', { method: 'PUT', token: user.token, body: { enabled: false } });
-    const { evidence } = await agentSearch('青色灯塔的守塔人是谁');
-    assert.ok(!evidence.some(e => /rerank/.test(e.method)), '关闭后不应含rerank');
+    const { evidence, toolResult } = await agentSearch('青色灯塔的守塔人是谁');
+    assert.ok(toolResult && !/\+rerank/.test(toolResult.source || ''), '关闭后不应含rerank');
     assert.ok(evidence.some(e => e.method === 'hybrid'), `应为hybrid: ${evidence.map(e => e.method)}`);
 });
 

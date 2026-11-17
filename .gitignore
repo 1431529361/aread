@@ -18,6 +18,7 @@ node_modules/
 data.db
 data.db-shm
 data.db-wal
+data.db.backup-*
 
 # 鐢ㄦ埛涓婁紶鐨勪功绫?
 books/
@@ -50,3 +51,10 @@ desktop.ini
 # 涓婁紶涓存椂鏂囦欢
 uploads/
 tmp/
+
+# browser harness temp credentials (test artifact, do not commit)
+.p1b-browser-harness.json
+.p2-browser-harness.json
+.p4-eval.log
+.p4-eval.pid
+.p4-browser-harness.json

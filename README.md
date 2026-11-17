@@ -21,7 +21,7 @@
   - 自动压缩：上下文接近模型窗口 70% 时自动滚动摘要压缩
   - 手动压缩：对话页一键压缩，显示节省的 token 数
   - 实时监控：顶部显示当前上下文 token 占用量及百分比（如 `1.2K / 128K（1%）`）
-- **用户记忆**：AI 自动从对话中抽取用户偏好/事实/兴趣，跨会话注入，让 AI "记得"你
+- **用户记忆**：有来源、可确认/更正/删除/暂停的治理型长期记忆；用户级偏好跨书共享，书级目标/未解问题按书隔离，回答时展示"本次参考的记忆"
 - **会话持久化**：对话历史持久化到 SQLite，支持查看、归档、删除
 - **历史导航**：底部"历史"标签展示会话列表，点击可回溯到对应书籍的对话现场
 
@@ -36,7 +36,7 @@
 
 ### 🧠 Agent 智能体
 
-- **Function Calling 工具 Agent**：开启"Agent 模式"后，AI 自主决定调用工具查阅全书内容
+- **Function Calling 工具 Agent**：统一问答入口下 AI 自主决定调用工具查阅全书内容，无需用户切换模式
   - **工具自注册架构**：工具放在 `tools/` 目录，每个工具一个自包含文件（schema + 实现同处一地），启动时自动扫描注册，新增工具零侵入
   - 内置 3 个检索类工具：`searchInBook`（全书检索）、`getChapterInfo`（章节内容）、`lookupCharacter`（人物查找）
   - 翻译/总结等任务由模型直接完成，不注册为工具（避免冗余 LLM 往返）
@@ -100,7 +100,7 @@
 | 密码加密 | bcryptjs |
 | 文件上传 | Multer |
 | 编码检测 | jschardet + iconv-lite |
-| 密钥加密 | crypto (AES-256-CBC) |
+| 密钥加密 | crypto（新写入版本化 AES-256-GCM 带完整性保护；legacy CBC 兼容解密，[credential-crypto.js](credential-crypto.js)） |
 | 环境变量 | dotenv |
 | AI 接口 | OpenAI 兼容 API (SSE 流式) |
 | Token 估算 | gpt-tokenizer (OpenAI 兼容 BPE) |
@@ -203,13 +203,13 @@ PORT=3000
 
 ## Agent 智能体使用指南
 
-### 1. Agent 模式问答（工具调用）
+### 1. 统一入口问答（自动工具调用）
 
-在阅读页打开 AI 面板，开启顶部的 **"Agent 模式"** 开关后提问：
+在阅读页打开 AI 对话页直接提问，系统按问题证据需求自动决策：
 
-- Agent 会自主判断是否需要调用工具（如检索全书其他章节）
+- 涉及选文之外的书内事实时，Agent 自主调用工具检索全书证据后再回答
 - trace 区实时展示思考链、工具调用参数与返回结果
-- 若问题可直接基于选中文本回答，Agent 不会调用工具，直接输出答案
+- 若问题可直接基于选中文本回答，不会额外检索
 
 > **模型要求**：需所配置模型支持 Function Calling（如 GLM-4 系列、DeepSeek、Qwen 等）。模型不支持或工具决策超时时，自动降级为普通流式问答，不影响使用。
 
@@ -231,7 +231,7 @@ PORT=3000
 - 已配置向量化时，分批调用 Embedding API 将向量写入 sqlite-vec 虚拟表 `rag_vec`（模式 `向量+BM25`）
 - 未配置向量化时自动降级为纯 BM25 模式，不阻塞建索引
 - 检索时向量 KNN 与 BM25 双路各取 Top-10，RRF（Reciprocal Rank Fusion）融合后返回 Top-5
-- 建立索引后，Agent 模式中的 `searchInBook` 工具会优先使用该索引
+- 建立索引后，统一问答中的 `searchInBook` 工具会优先使用该索引
 
 > 查询时使用建库时记录的同一 Embedding 模型（存于 `rag_index_meta`）；若该提供商 Key 已删除，检索自动降级 BM25 不报错。
 
@@ -316,25 +316,31 @@ module.exports = {
 | POST | `/api/conversations/:id/compress` | 手动压缩上下文 |
 | DELETE | `/api/conversations/:id` | 删除会话 |
 
-### 用户记忆
+### 用户记忆（P2 治理）
+
+只从用户本人表达中保存有来源的信息：用户级偏好与书级阅读目标/未解问题分离，候选确认、编辑、完成、删除、暂停，删除屏障防旧任务回写；召回按作用域与相关性门槛注入并展示"本次参考的记忆"。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/memories` | 获取用户记忆列表 |
-| DELETE | `/api/memories/:id` | 删除单条记忆 |
-| DELETE | `/api/memories` | 清空所有记忆 |
+| GET | `/api/memories` | 记忆列表（MemoryView，可按 bookId/status 筛选）+ epoch |
+| PUT | `/api/memories/:id` | 编辑内容（expectedRevision，版本冲突 409） |
+| POST | `/api/memories/:id/confirm` | 确认候选（legacy 需 classification） |
+| POST | `/api/memories/:id/complete` | 完成阅读目标/未解问题 |
+| DELETE | `/api/memories/:id` | 删除单条（expectedRevision，建立屏障） |
+| DELETE | `/api/memories` | 清空（expectedEpoch，建立屏障） |
+| GET/PUT | `/api/memory-settings` | 自动记忆暂停/恢复（expectedEpoch） |
 
 ### Agent 智能体
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/agent/stream` | Function Calling Agent 流式问答（SSE，推送思考链/工具调用/最终答案） |
+| POST | `/api/ask-stream` | 统一问答入口（SSE，自动工具决策/证据门控/引用/记忆注入） |
 | GET | `/api/agent/tasks` | 获取可用的 Multi-Agent 任务列表 |
 | POST | `/api/agent/task` | 执行 Multi-Agent 任务（SSE，推送节点进度与最终结果） |
 | GET | `/api/agent/task/result` | 查询已保存的任务结果（`bookId` + `taskType`） |
 | DELETE | `/api/agent/task/result` | 删除已保存的任务结果 |
 
-**Agent 流式事件类型**（`/api/agent/stream` 返回的 SSE data）：
+**Agent 流式事件类型**（`/api/ask-stream` 返回的 SSE data）：
 
 | 事件 type | 含义 |
 |-----------|------|
@@ -437,7 +443,7 @@ trae02airead/
 
 ## 安全说明
 
-1. **密钥加密**：所有 API 密钥（含 Embedding 密钥）使用 AES-256-CBC 加密存储
+1. **密钥加密**：所有 API 密钥（含 Embedding 密钥）加密存储；新写入为版本化 AES-256-GCM（`v2.` 前缀、认证标签防篡改），旧 AES-256-CBC 密文保持可解密；`credential-crypto.migrate` 可显式迁移旧密文（业务库迁移须单独确认并在备份上执行）
 2. **密钥保护**：`ENCRYPTION_KEY` 改变后无法解密旧密钥
 3. **数据隔离**：用户数据基于 UUID 隔离，RAG 分块/向量按用户隔离
 4. **数据库存储**：用户数据、API 密钥、书籍元数据、RAG 索引等均存储在 SQLite 数据库 (data.db) 中

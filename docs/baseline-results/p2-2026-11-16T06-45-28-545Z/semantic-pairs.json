@@ -1,0 +1,44 @@
+[
+  {
+    "script": "p2mem-07",
+    "key": "interest.topic:sichuan-cuisine-cooking-techniques",
+    "relevant": false,
+    "lex": 0,
+    "cos": 0.372
+  },
+  {
+    "script": "p2mem-08",
+    "key": "reading_goal.primary",
+    "relevant": true,
+    "lex": 0.087,
+    "cos": 0.602
+  },
+  {
+    "script": "p2mem-10",
+    "key": "fact.role",
+    "relevant": true,
+    "lex": 0.024,
+    "cos": 0.515
+  },
+  {
+    "script": "p2mem-10",
+    "key": "open_question:time-jump-technique",
+    "relevant": false,
+    "lex": 0,
+    "cos": 0.493
+  },
+  {
+    "script": "p2mem-10",
+    "key": "fact.role",
+    "relevant": false,
+    "lex": 0,
+    "cos": 0.391
+  },
+  {
+    "script": "p2mem-10",
+    "key": "open_question:time-jump-technique",
+    "relevant": true,
+    "lex": 0.255,
+    "cos": 0.822
+  }
+]

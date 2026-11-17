@@ -1,0 +1,69 @@
+{
+  "pairs": [
+    {
+      "script": "p2mem-07",
+      "question": "请解释什么是叙事视角",
+      "content": "用户自述长期关注川菜烹饪技巧。",
+      "key": "interest.topic:sichuan-cuisine-cooking-techniques",
+      "relevant": false
+    },
+    {
+      "script": "p2mem-08",
+      "question": "我该如何分析这本书的自传真实性？",
+      "content": "用户自述读这本书的主要目标是写一份读书报告，重点关注叙事结构。",
+      "key": "reading_goal.primary",
+      "relevant": true
+    },
+    {
+      "script": "p2mem-10",
+      "question": "我该如何分析《忏悔录》的自传真实性？",
+      "content": "用户自述是中文系学生",
+      "key": "fact.role",
+      "relevant": true
+    },
+    {
+      "script": "p2mem-10",
+      "question": "我该如何分析《忏悔录》的自传真实性？",
+      "content": "我还没理解本书的时间跳跃手法，希望以后接着讨论。",
+      "key": "open_question:time-jump-technique",
+      "relevant": false
+    },
+    {
+      "script": "p2mem-10",
+      "question": "时间跳跃手法还是没懂，能再讲讲吗",
+      "content": "用户自述是中文系学生",
+      "key": "fact.role",
+      "relevant": false
+    },
+    {
+      "script": "p2mem-10",
+      "question": "时间跳跃手法还是没懂，能再讲讲吗",
+      "content": "我还没理解本书的时间跳跃手法，希望以后接着讨论。",
+      "key": "open_question:time-jump-technique",
+      "relevant": true
+    }
+  ],
+  "results": [
+    {
+      "threshold": 0.15,
+      "relevantRecall": 0.3333333333333333,
+      "irrelevantInject": 0,
+      "relTotal": 3,
+      "irrTotal": 3
+    },
+    {
+      "threshold": 0.25,
+      "relevantRecall": 0.3333333333333333,
+      "irrelevantInject": 0,
+      "relTotal": 3,
+      "irrTotal": 3
+    },
+    {
+      "threshold": 0.35,
+      "relevantRecall": 0,
+      "irrelevantInject": 0,
+      "relTotal": 3,
+      "irrTotal": 3
+    }
+  ]
+}

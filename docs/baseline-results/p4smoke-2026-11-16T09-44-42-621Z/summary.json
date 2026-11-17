@@ -1,0 +1,60 @@
+{
+  "runId": "p4smoke-2026-11-16T09-44-42-621Z",
+  "model": "qwen3.8-flash",
+  "rerank": false,
+  "dataset": "p4-holdout-1",
+  "holdout": true,
+  "total": 2,
+  "errors": 0,
+  "insufficient": 0,
+  "noEvidenceAnswer": 0,
+  "evWithLocator": 27,
+  "coordValid": 27,
+  "citedTotal": 7,
+  "citedLegal": 7,
+  "invalidCitWarn": 0,
+  "hit": 2,
+  "recall": 1.5,
+  "mrr": 0.22549019607843135,
+  "answerable": 2,
+  "toolCallsSum": 12,
+  "firstAnswer": [
+    65360.6526,
+    46720.48790000001
+  ],
+  "totalMs": [
+    69289.3627,
+    51002.815900000016
+  ],
+  "needsEvidenceTotal": 2,
+  "needsEvidenceNoTool": 0,
+  "noAnswerTotal": 0,
+  "noAnswerHandled": 0,
+  "coordAccuracy": 1,
+  "citationLegality": 1,
+  "hitAt5": 1,
+  "evidenceRecallAt5": 0.75,
+  "mrrAt5": 0.11274509803921567,
+  "noEvidenceAnswerRate": 0,
+  "missedRetrievalRate": 0,
+  "noAnswerHandlingRate": null,
+  "retrievalCompare": {
+    "embedding+bm25": {
+      "answerable": 2,
+      "hitAt5": 1,
+      "evidenceRecallAt5": 1,
+      "mrrAt5": 1
+    },
+    "bm25": {
+      "answerable": 2,
+      "hitAt5": 1,
+      "evidenceRecallAt5": 1,
+      "mrrAt5": 1
+    }
+  },
+  "avgToolCalls": 6,
+  "firstAnswerP50": 65361,
+  "firstAnswerP95": 65361,
+  "totalP50": 69289,
+  "finishedAt": "2026-11-16T09:47:54.628Z"
+}

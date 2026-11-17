@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const REPO_ROOT = path.join(__dirname, '..');
 const BASELINE = path.join(REPO_ROOT, 'docs', 'baseline');
 const { startIsolatedServer, api, registerUser } = require('../tests/helpers/isolated-server');
+const TU = require('../text-utils');
 
 function parseArgs(argv) {
     const a = { envFile: null, limit: null, dryRun: false };
@@ -58,13 +59,15 @@ async function main() {
     const user = await registerUser(srv.url, 'p0-ablation');
 
     // 上传两本书
-    const bookIds = {}, bookHashes = {};
+    const bookIds = {}, bookHashes = {}, normHashes = {};
     for (const [id, rel] of Object.entries(ds.books)) {
         const abs = path.join(REPO_ROOT, rel);
         const buf = fs.readFileSync(abs);
         bookHashes[id] = crypto.createHash('sha256').update(buf).digest('hex');
+        const norm = TU.normalizeText(buf.toString('utf-8'));
+        normHashes[id] = TU.contentHash(norm);
         const form = new FormData();
-        form.append('book', new Blob([buf.toString('utf-8')], { type: 'text/plain' }), path.basename(rel));
+        form.append('book', new Blob([norm], { type: 'text/plain' }), path.basename(rel));
         const res = await fetch(`${srv.url}/api/books/upload`, { method: 'POST', headers: { Authorization: `Bearer ${user.token}` }, body: form });
         bookIds[id] = (await res.json()).book.id;
     }
@@ -86,8 +89,8 @@ async function main() {
         const out = {};
         for (const [id, bookId] of Object.entries(bookIds)) {
             const res = await api(srv.url, `/api/books/${bookId}/index`, { method: 'POST', token: user.token, body: {} });
-            out[id] = res.data;
-            console.log(`  索引 ${id}: ${res.data.mode} (${res.data.chunkCount}块)${res.data.embedError ? ' embedError=' + res.data.embedError : ''}`);
+            out[id] = { mode: res.data.active && res.data.active.mode, chunkCount: res.data.active && res.data.active.chunkCount, success: res.data.success };
+            console.log(`  索引 ${id}: ${out[id].mode} (${out[id].chunkCount}块)${res.data.embedError ? ' embedError=' + res.data.embedError : ''}`);
         }
         lastEmbedOn = embedOn;
         summary._lastIdx = out;
@@ -123,18 +126,18 @@ async function main() {
             const agg = { answerable: 0, hit: 0, recall: 0, mrr: 0, latencies: [] };
             for (const q of questions) {
                 const t0 = performance.now();
-                let res = { hits: [], diagnostics: {} }, err = null;
-                try { res = await rag.retrieveDetailed(user.userId, bookIds[q.book], q.question, 5, { rerank: cond.rerank }); }
+                let res = { candidates: [], diagnostics: {} }, err = null;
+                try { res = await rag.retrieveDetailed(user.userId, bookIds[q.book], q.question, 5, { rerank: cond.rerank, expectedContentHash: normHashes[q.book] }); }
                 catch (e) { err = e.message; }
                 const elapsed = performance.now() - t0;
-                const m = metrics(res.hits, q.goldQuotes || []);
+                const m = metrics(res.candidates, q.goldQuotes || []);
                 if (q.goldQuotes && q.goldQuotes.length) { agg.answerable++; if (m.hit) agg.hit++; agg.recall += m.recall || 0; agg.mrr += m.mrr || 0; }
                 agg.latencies.push(elapsed);
                 jsonl('retrieval.jsonl', {
                     id: q.id, book: q.book, group: q.group, condition: cond.name, query: q.question,
                     latencyMs: Math.round(elapsed), error: err, hit: m.hit, recall: m.recall, mrr: m.mrr,
-                    paths: res.diagnostics.paths, rerank: res.diagnostics.rerank,
-                    retrieved: res.hits.map((h, i) => ({ rank: i + 1, chapter: h.chapter, method: h.method, score: h.score, preview: String(h.text).slice(0, 120), matchedGold: (q.goldQuotes || []).some(g => normalize(h.text).includes(normalize(g))) }))
+                    status: res.status, paths: res.diagnostics.paths, rerank: res.diagnostics.rerank,
+                    retrieved: res.candidates.map((h, i) => ({ rank: i + 1, chapter: h.chapter && h.chapter.title, method: h.method, score: h.score && h.score.value, locator: h.locator, preview: String(h.text).slice(0, 120), matchedGold: (q.goldQuotes || []).some(g => normalize(h.text).includes(normalize(g))) }))
                 });
             }
             const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))]); };

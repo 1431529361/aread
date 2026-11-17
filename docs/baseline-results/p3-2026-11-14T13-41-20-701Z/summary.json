@@ -1,0 +1,153 @@
+{
+  "runId": "p3-2026-11-14T13-41-20-701Z",
+  "embedModel": "BAAI/bge-m3",
+  "conditions": {
+    "hybrid-500": {
+      "name": "hybrid-500",
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "recallAt5": 0.59375,
+      "mrrAt5": 0.5875,
+      "p50": 95,
+      "p95": 427,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "bm25",
+          "chunks": 1167
+        }
+      }
+    },
+    "hybrid-800": {
+      "name": "hybrid-800",
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "recallAt5": 0.59375,
+      "mrrAt5": 0.5875,
+      "p50": 96,
+      "p95": 248,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "bm25",
+          "chunks": 1167
+        }
+      }
+    },
+    "hybrid-1200": {
+      "name": "hybrid-1200",
+      "answerable": 16,
+      "hitAt5": 0.75,
+      "recallAt5": 0.625,
+      "mrrAt5": 0.7,
+      "p50": 102,
+      "p95": 459,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 491
+        }
+      }
+    },
+    "hybrid-1200+expand": {
+      "name": "hybrid-1200+expand",
+      "answerable": 16,
+      "hitAt5": 0.6875,
+      "recallAt5": 0.625,
+      "mrrAt5": 0.5520833333333333,
+      "p50": 27,
+      "p95": 85,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 491
+        }
+      }
+    },
+    "hybrid-500+expand": {
+      "name": "hybrid-500+expand",
+      "answerable": 16,
+      "hitAt5": 0.75,
+      "recallAt5": 0.65625,
+      "mrrAt5": 0.6145833333333333,
+      "p50": 121,
+      "p95": 447,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 1167
+        }
+      }
+    },
+    "hybrid-500+rerank": {
+      "name": "hybrid-500+rerank",
+      "answerable": 16,
+      "hitAt5": 0.8125,
+      "recallAt5": 0.65625,
+      "mrrAt5": 0.73125,
+      "p50": 332,
+      "p95": 722,
+      "index": {
+        "one-hundred-years": {
+          "mode": "embedding+bm25",
+          "chunks": 635
+        },
+        "confessions": {
+          "mode": "embedding+bm25",
+          "chunks": 1167
+        }
+      }
+    }
+  },
+  "corefRewrite": {
+    "n": 4,
+    "original": {
+      "hitAt5": 0,
+      "recallAt5": 0,
+      "mrrAt5": 0
+    },
+    "rewritten": {
+      "hitAt5": 0,
+      "recallAt5": 0,
+      "mrrAt5": 0
+    }
+  },
+  "cache": {
+    "books": 5,
+    "coldP50": 121,
+    "hotP50": 112,
+    "coldMs": [
+      121,
+      129,
+      109,
+      117,
+      165
+    ],
+    "hotMs": [
+      109,
+      107,
+      127,
+      112,
+      149
+    ]
+  },
+  "finishedAt": "2026-11-14T13:49:43.693Z"
+}

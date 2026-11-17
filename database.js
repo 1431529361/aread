@@ -300,6 +300,185 @@ const MIGRATIONS = [
             if (!cols.includes('metadata')) db.exec('ALTER TABLE messages ADD COLUMN metadata TEXT');
             db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_conv_seq_unique ON messages(conversation_id, seq)');
         }
+    },
+    {
+        // P1b R1：定位列 + 索引版本表。只做加法；旧块/旧向量保留，active_version=NULL 标旧版。
+        id: 'web_002_rag_locator',
+        up(db) {
+            const cols = db.prepare('PRAGMA table_info(rag_chunks)').all().map(c => c.name);
+            const addCol = (name, ddl) => { if (!cols.includes(name)) db.exec(`ALTER TABLE rag_chunks ADD COLUMN ${ddl}`); };
+            addCol('index_version', 'index_version TEXT');
+            addCol('content_hash', 'content_hash TEXT');
+            addCol('chapter_id', 'chapter_id TEXT');
+            addCol('chapter_ordinal', 'chapter_ordinal INTEGER');
+            addCol('start_offset', 'start_offset INTEGER');
+            addCol('end_offset', 'end_offset INTEGER');
+            const metaCols = db.prepare('PRAGMA table_info(rag_index_meta)').all().map(c => c.name);
+            if (!metaCols.includes('active_version')) db.exec('ALTER TABLE rag_index_meta ADD COLUMN active_version TEXT');
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS rag_index_versions (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    book_id TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    normalization_version TEXT NOT NULL,
+                    chunker_version TEXT NOT NULL,
+                    chunker_config_json TEXT NOT NULL,
+                    embed_provider TEXT,
+                    embed_model TEXT,
+                    embed_fingerprint TEXT,
+                    dims INTEGER,
+                    distance_metric TEXT,
+                    mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    chunk_count INTEGER DEFAULT 0,
+                    vector_count INTEGER DEFAULT 0,
+                    error_code TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    finished_at TEXT
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_rag_chunks_version_pos
+                    ON rag_chunks(user_id, book_id, index_version, chunk_index) WHERE index_version IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_rag_chunks_version
+                    ON rag_chunks(user_id, book_id, index_version);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_rag_versions_building
+                    ON rag_index_versions(user_id, book_id) WHERE status = 'building';
+                CREATE INDEX IF NOT EXISTS idx_rag_versions_user_book
+                    ON rag_index_versions(user_id, book_id, status);
+            `);
+        }
+    },
+    {
+        // P2 M1：记忆生命周期。事务内重建 user_memories（旧 UNIQUE(user_id,content) 无法只靠加索引取消），
+        // 旧行候选化并保留 ID/正文/创建时间；sqlite_sequence 高水位显式保留，防止历史 MemoryRef 串条。
+        // 旧表整表备份到 user_memories_legacy_backup（含原 embedding/非法 kind），仅供回滚核对，业务不召回。
+        id: 'web_003_memory_lifecycle',
+        up(db) {
+            const oldCols = db.prepare('PRAGMA table_info(user_memories)').all().map(c => c.name);
+            if (oldCols.includes('status')) return; // 已是新结构（防御性幂等）
+
+            db.exec('CREATE TABLE IF NOT EXISTS user_memories_legacy_backup AS SELECT * FROM user_memories WHERE 0');
+            db.exec('INSERT INTO user_memories_legacy_backup SELECT * FROM user_memories WHERE id NOT IN (SELECT id FROM user_memories_legacy_backup)');
+
+            const seqRow = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'user_memories'").get();
+            const oldSeq = seqRow ? Number(seqRow.seq) : null;
+            const oldCount = db.prepare('SELECT COUNT(*) c FROM user_memories').get().c;
+
+            db.exec(`
+                CREATE TABLE user_memories_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL DEFAULT 'fact'
+                        CHECK (kind IN ('preference','fact','interest','reading_goal','open_question')),
+                    scope TEXT NOT NULL DEFAULT 'user' CHECK (scope IN ('user','book')),
+                    book_id TEXT,
+                    key TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    normalized_value TEXT,
+                    status TEXT NOT NULL DEFAULT 'candidate'
+                        CHECK (status IN ('candidate','active','superseded','expired','completed')),
+                    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+                    source_type TEXT NOT NULL DEFAULT 'legacy'
+                        CHECK (source_type IN ('user_message','user_edit','user_confirmation','legacy')),
+                    source_conv TEXT,
+                    source_message_id INTEGER,
+                    source_start INTEGER,
+                    source_end INTEGER,
+                    order_message_id INTEGER,
+                    salience REAL DEFAULT 1.0,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now')),
+                    last_seen_at TEXT,
+                    expires_at TEXT,
+                    CHECK ((scope = 'user' AND book_id IS NULL) OR (scope = 'book' AND book_id IS NOT NULL)),
+                    CHECK ((source_start IS NULL AND source_end IS NULL)
+                        OR (source_start IS NOT NULL AND source_end IS NOT NULL AND source_start >= 0 AND source_end > source_start)),
+                    CHECK (kind NOT IN ('reading_goal','open_question') OR scope = 'book')
+                );
+            `);
+            // 旧 kind 合法则保留，非法/空映射为占位 fact（原值仅在备份表）；不推断真实作用域
+            db.exec(`
+                INSERT INTO user_memories_new
+                    (id, user_id, kind, scope, book_id, key, content, normalized_value, status, revision,
+                     source_type, source_conv, source_message_id, source_start, source_end, order_message_id,
+                     salience, created_at, updated_at, last_seen_at, expires_at)
+                SELECT id, user_id,
+                    CASE WHEN kind IN ('preference','fact','interest','reading_goal','open_question') THEN kind ELSE 'fact' END,
+                    'user', NULL, 'legacy:' || id, content, NULL, 'candidate', 1,
+                    'legacy', source_conv, NULL, NULL, NULL, NULL,
+                    salience, created_at, updated_at, NULL, NULL
+                FROM user_memories
+            `);
+            const newCount = db.prepare('SELECT COUNT(*) c FROM user_memories_new').get().c;
+            if (newCount !== oldCount) throw new Error(`记忆迁移行数不一致: ${oldCount} -> ${newCount}`);
+
+            db.exec('DROP TABLE user_memories');
+            db.exec('ALTER TABLE user_memories_new RENAME TO user_memories');
+            if (oldSeq !== null) {
+                // sqlite_sequence 为内部表（name 无唯一约束），先删后插显式保留高水位
+                db.prepare("DELETE FROM sqlite_sequence WHERE name = 'user_memories'").run();
+                db.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('user_memories', ?)").run(oldSeq);
+            }
+            db.exec(`
+                CREATE UNIQUE INDEX idx_mem_user_active ON user_memories(user_id, key) WHERE scope = 'user' AND status = 'active';
+                CREATE UNIQUE INDEX idx_mem_book_active ON user_memories(user_id, book_id, key) WHERE scope = 'book' AND status = 'active';
+                CREATE INDEX idx_mem_user_status ON user_memories(user_id, status);
+                CREATE INDEX idx_mem_user ON user_memories(user_id, salience DESC);
+
+                CREATE TABLE memory_user_state (
+                    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    memory_epoch INTEGER NOT NULL DEFAULT 0,
+                    blocked_through_message_id INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+
+                -- 来源处理记录：只存标识与状态，不存正文；不级联于 messages/conversations，
+                -- 删除源消息后记录仍在（防回写屏障），删除用户时随用户级联清理。
+                CREATE TABLE memory_sources (
+                    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    message_id INTEGER NOT NULL,
+                    request_id TEXT,
+                    conversation_id TEXT,
+                    expected_epoch INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (state IN ('pending','processing','done','skipped','failed')),
+                    error_code TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (user_id, message_id)
+                );
+                CREATE INDEX idx_memory_sources_state ON memory_sources(user_id, state);
+                CREATE INDEX idx_memory_sources_request ON memory_sources(user_id, request_id);
+            `);
+            // 每用户屏障初始化为已有用户消息最大ID，避免升级后自动回扫历史
+            const users = db.prepare('SELECT id FROM users').all();
+            const maxMsg = db.prepare(`
+                SELECT COALESCE(MAX(m.id), 0) AS maxId FROM messages m
+                JOIN conversations c ON m.conversation_id = c.id
+                WHERE c.user_id = ? AND m.role = 'user'
+            `);
+            const insState = db.prepare('INSERT OR IGNORE INTO memory_user_state (user_id, blocked_through_message_id) VALUES (?, ?)');
+            for (const u of users) insState.run(u.id, maxMsg.get(u.id).maxId);
+        }
+    },
+    {
+        // P3-记忆 M5：记忆作用域内的语义向量（不复用书籍 rag_vec，语义空间不同）。
+        // 仅 active 记忆建向量；删除记忆随外键级联清理；Embedding 不可用时召回降级为纯词法。
+        id: 'web_004_memory_vectors',
+        up(db) {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS memory_vectors (
+                    memory_id INTEGER PRIMARY KEY REFERENCES user_memories(id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL,
+                    dims INTEGER NOT NULL,
+                    vec TEXT NOT NULL,
+                    fingerprint TEXT,
+                    updated_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_vectors_user ON memory_vectors(user_id);
+            `);
+        }
     }
 ];
 
@@ -325,4 +504,4 @@ function isVecAvailable() {
     return vecAvailable;
 }
 
-module.exports = { initDB, getDB, isVecAvailable, getDataRoot, getDbPath, getBooksDir, getRagIndexDir };
+module.exports = { initDB, getDB, isVecAvailable, getDataRoot, getDbPath, getBooksDir, getRagIndexDir, MIGRATIONS, applyMigrations };

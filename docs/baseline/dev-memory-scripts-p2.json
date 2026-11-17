@@ -1,0 +1,105 @@
+{
+  "version": "p2-dev-1",
+  "frozen": false,
+  "note": "P2/P3-记忆开发集（10段）。gold 为机器可检查的目标条目（key+scope+status+value），precision/recall 按条目计；probes 必须新建会话，expectRefs/forbidRefs 按记忆键检查注入，compliance 为结构启发式（人工复核原始答案）。书籍事实题不依赖索引（探针聚焦个性化表达）。阈值与注入分层在开发集选择，保留集见 holdout-memory-scripts-p2.json。",
+  "books": {
+    "one-hundred-years": "books/__defaults/百年孤独.txt",
+    "confessions": "books/__defaults/忏悔录 作者：卢梭.txt"
+  },
+  "scripts": [
+    {
+      "id": "p2mem-01", "scenario": "明确偏好", "book": "one-hundred-years",
+      "turns": ["请记住：我喜欢分点、简洁的回答，遇到术语请先解释。"],
+      "gold": [
+        { "key": "preference.answer_format", "scope": "user", "status": "active", "value": "bullets" },
+        { "key": "preference.answer_length", "scope": "user", "status": "active", "value": "concise" }
+      ],
+      "probes": [
+        { "newConversation": true, "question": "请解释什么是隐喻", "expectRefs": ["preference.answer_format", "preference.answer_length"], "forbidRefs": [], "compliance": { "type": "bullets" } }
+      ]
+    },
+    {
+      "id": "p2mem-02", "scenario": "同义重述去重", "book": "one-hundred-years",
+      "turns": ["我爱用要点列表来看回答。", "我希望回答尽量用条目呈现，不要大段文字。"],
+      "gold": [ { "key": "preference.answer_format", "scope": "user", "status": "active", "value": "bullets" } ],
+      "maxEntriesForKey": { "preference.answer_format": 1 },
+      "probes": []
+    },
+    {
+      "id": "p2mem-03", "scenario": "偏好更正", "book": "confessions",
+      "turns": ["我喜欢长篇详细的回答。", "更正一下：我现在更喜欢简短的回答，请改过来。"],
+      "gold": [ { "key": "preference.answer_length", "scope": "user", "status": "active", "value": "concise" } ],
+      "forbidActive": [ { "key": "preference.answer_length", "value": "detailed" } ],
+      "probes": [
+        { "newConversation": true, "question": "卢梭为什么写《忏悔录》？", "expectRefs": ["preference.answer_length"], "forbidRefs": [], "compliance": { "type": "concise" } }
+      ]
+    },
+    {
+      "id": "p2mem-04", "scenario": "一次性要求", "book": "one-hundred-years",
+      "turns": ["这次请只用法语回答我这个问题：你好吗？"],
+      "gold": [],
+      "probes": [
+        { "newConversation": true, "question": "马孔多是一个怎样的地方？", "expectRefs": [], "forbidRefs": ["preference.language"], "compliance": { "type": "not_french" } }
+      ]
+    },
+    {
+      "id": "p2mem-05", "scenario": "书籍引用污染", "book": "one-hundred-years",
+      "turns": [ { "selection": "奥雷连诺上校发动了三十二次武装起义，三十二次都遭到了失败。", "question": "这句话是什么意思？" } ],
+      "gold": [],
+      "probes": []
+    },
+    {
+      "id": "p2mem-06", "scenario": "纯提问无能力标签", "book": "confessions",
+      "turns": ["卢梭和华伦夫人是什么关系？", "什么是隐喻？"],
+      "gold": [],
+      "probes": []
+    },
+    {
+      "id": "p2mem-07", "scenario": "无关兴趣误注入", "book": "one-hundred-years",
+      "turns": ["请记住我长期关注川菜烹饪技巧。", "今天天气怎么样？"],
+      "gold": [ { "key": "interest.topic:cooking", "scope": "user", "status": "active" } ],
+      "goldKeyPattern": { "interest.topic:cooking": "interest.topic:*" },
+      "probes": [
+        { "newConversation": true, "question": "请解释什么是叙事视角", "expectRefs": [], "forbidRefs": ["interest.topic:*"], "compliance": null }
+      ]
+    },
+    {
+      "id": "p2mem-08", "scenario": "跨书作用域", "book": "one-hundred-years",
+      "turns": ["我读这本书为了写一份读书报告，重点关注叙事结构。"],
+      "switchBook": "confessions",
+      "turns2": ["我读《忏悔录》是为了搞清楚卢梭的自我辩护逻辑。"],
+      "gold": [
+        { "key": "reading_goal.primary", "scope": "book", "book": "one-hundred-years", "status": "active" },
+        { "key": "reading_goal.primary", "scope": "book", "book": "confessions", "status": "active" }
+      ],
+      "probes": [
+        { "book": "confessions", "newConversation": true, "question": "我该如何分析这本书的自传真实性？", "expectRefs": ["reading_goal.primary"], "expectRefsBook": "confessions", "forbidRefsBook": "one-hundred-years", "compliance": null }
+      ]
+    },
+    {
+      "id": "p2mem-09", "scenario": "删除生效与重新表达", "book": "one-hundred-years",
+      "turns": ["请记住我喜欢用表格对比人物。"],
+      "actions": [ { "type": "clearMemories" } ],
+      "turns2": ["请记住我喜欢用表格对比人物。"],
+      "gold": [ { "key": "preference.example_style", "scope": "user", "status": "active" } ],
+      "goldKeyPattern": { "preference.example_style": "preference.example_style" },
+      "afterClearCount": 0,
+      "probes": [
+        { "newConversation": true, "question": "对比一下奥雷连诺上校和他的父亲", "expectRefs": ["preference.example_style"], "forbidRefs": [], "compliance": null }
+      ]
+    },
+    {
+      "id": "p2mem-10", "scenario": "背景事实与未解问题", "book": "confessions",
+      "turns": ["请记住：我是中文系学生，正在准备毕业论文。", "我还没理解本书的时间跳跃手法，希望以后接着讨论。"],
+      "gold": [
+        { "key": "fact.role", "scope": "user", "status": "active" },
+        { "key": "open_question:time-jump", "scope": "book", "book": "confessions", "status": "active" }
+      ],
+      "goldKeyPattern": { "fact.role": "fact.role", "open_question:time-jump": "open_question:*" },
+      "probes": [
+        { "newConversation": true, "question": "我该如何分析《忏悔录》的自传真实性？", "expectRefs": ["fact.role"], "forbidRefs": [], "compliance": null },
+        { "newConversation": true, "question": "时间跳跃手法还是没懂，能再讲讲吗", "expectRefs": ["open_question:*"], "forbidRefs": [], "compliance": null }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "runId": "p4mem-2026-11-16T12-21-09-207Z",
+  "model": "qwen3.8-flash",
+  "suite": "extract",
+  "scripts": 20,
+  "turns": 35,
+  "errors": 0,
+  "savedTotal": 18,
+  "savedMatched": 15,
+  "goldTotal": 18,
+  "goldMatched": 17,
+  "probeTotal": 7,
+  "misinject": 0,
+  "misinjectProbes": 2,
+  "compliancePass": 3,
+  "complianceTotal": 3,
+  "scheduledTurns": 33,
+  "extractDone": 32,
+  "extractFailed": 1,
+  "checks": [
+    {
+      "id": "h2-01",
+      "check": "forbidActive:preference.answer_length=detailed",
+      "pass": true
+    },
+    {
+      "id": "h2-01",
+      "check": "forbidActive:preference.answer_length=concise",
+      "pass": true
+    },
+    {
+      "id": "h2-02",
+      "check": "forbidActive:interest.topic:drama=*",
+      "pass": true
+    },
+    {
+      "id": "h2-04",
+      "check": "preActionGold",
+      "pass": true
+    },
+    {
+      "id": "h2-05",
+      "check": "preActionGold",
+      "pass": true
+    },
+    {
+      "id": "h2-05",
+      "check": "forbidActive:preference.answer_length=detailed",
+      "pass": true
+    },
+    {
+      "id": "h2-06",
+      "check": "preActionGold",
+      "pass": true
+    },
+    {
+      "id": "h2-09",
+      "check": "preActionGold",
+      "pass": true
+    },
+    {
+      "id": "h2-10",
+      "check": "preActionGold",
+      "pass": true
+    },
+    {
+      "id": "h2-13",
+      "check": "preActionGold",
+      "pass": true
+    }
+  ],
+  "precision": 0.8333333333333334,
+  "recall": 0.9444444444444444,
+  "misinjectRate": 0,
+  "complianceRate": 1,
+  "extractLatencyP50": 15277,
+  "scheduledRatio": 0.9428571428571428,
+  "thresholdExperiment": null,
+  "layers": null,
+  "checksPass": 10,
+  "checksTotal": 10,
+  "finishedAt": "2026-11-16T12:55:29.459Z"
+}

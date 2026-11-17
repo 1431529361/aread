@@ -49,43 +49,58 @@ after(async () => { if (srv) await srv.stop(); if (fake) await fake.close(); });
 test('配置阿里云假Embedding后建库为 embedding+bm25', async () => {
     await setEmbedding('aliyun', { aliyunBaseUrl: `${fake.url}/v1`, aliyunModel: 'fake-embed', aliyunApiKey: 'sk-p0-embed-0123456789abcdef' });
     const result = await indexBook(bookA.id);
-    assert.strictEqual(result.mode, 'embedding+bm25');
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.active.mode, 'embedding+bm25');
+    assert.strictEqual(result.usable, true);
     const status = await api(srv.url, `/api/books/${bookA.id}/index-status`, { token: user.token });
-    assert.strictEqual(status.data.mode, 'embedding+bm25');
+    assert.strictEqual(status.data.active.mode, 'embedding+bm25');
+    assert.strictEqual(status.data.usable, true);
 });
 
-test('Agent 检索命中目标段落，证据方法含 hybrid/vector', async () => {
+test('Agent 检索命中目标段落，证据带 locator 且方法含 hybrid/vector', async () => {
     const { evidence } = await searchEvidence('青色灯塔的守塔人是谁', bookA.id);
     assert.ok(evidence.length > 0, '应有证据');
     assert.ok(evidence.some(e => /hybrid|vector/.test(e.method)), `证据方法应含hybrid/vector: ${evidence.map(e => e.method)}`);
     assert.ok(evidence.map(e => e.text).join('').includes('老周'));
+    // P1b：书内证据必须有可核验 locator，text 等于原文 slice
+    const bookResp = await api(srv.url, `/api/books/${bookA.id}`, { token: user.token });
+    const content = bookResp.data.content;
+    for (const e of evidence) {
+        assert.ok(e.locator, '书内证据应有 locator');
+        assert.strictEqual(e.verified, true, 'locator 与当前内容一致应 verified');
+        assert.strictEqual(e.text, content.slice(e.locator.start, e.locator.end));
+        assert.strictEqual(e.locator.contentHash, bookResp.data.contentHash);
+    }
 });
 
 test('关闭Embedding重建后纯BM25，证据方法为 bm25', async () => {
     await setEmbedding('off');
     const result = await indexBook(bookA.id);
-    assert.strictEqual(result.mode, 'bm25');
+    assert.strictEqual(result.active.mode, 'bm25');
     const { evidence } = await searchEvidence('青色灯塔的守塔人是谁', bookA.id);
     assert.ok(evidence.some(e => e.method === 'bm25'), `证据方法应为bm25: ${evidence.map(e => e.method)}`);
     assert.ok(evidence.map(e => e.text).join('').includes('老周'));
 });
 
-test('Embedding服务失败时建库降级BM25并报告embedError', async () => {
+test('Embedding服务失败时重建保留旧索引并报告警告', async () => {
     await setEmbedding('aliyun', { aliyunBaseUrl: `${fake.url}/v1`, aliyunModel: 'fake-embed', aliyunApiKey: 'sk-p0-embed-0123456789abcdef' });
     await fake.control({ embedError: { status: 500, body: { error: { message: 'fake embedding outage' } } } });
     const result = await indexBook(bookA.id);
-    assert.strictEqual(result.mode, 'bm25');
-    assert.ok(result.embedError);
+    // 此前已有 active（BM25），重建失败应保留旧索引而非静默替换
+    assert.strictEqual(result.success, false);
+    assert.ok(result.warnings.some(w => w.code === 'EMBED_FAILED'));
+    assert.strictEqual(result.usable, true, '旧 active 仍可用');
     await fake.control({ embedError: null });
 });
 
-test('无索引时检索返回空证据，不报错', async () => {
+test('无索引时检索返回 unavailable，不报错', async () => {
     await api(srv.url, `/api/books/${bookA.id}/index`, { method: 'DELETE', token: user.token });
     const status = await api(srv.url, `/api/books/${bookA.id}/index-status`, { token: user.token });
-    assert.strictEqual(status.data.indexed, false);
+    assert.strictEqual(status.data.usable, false);
+    assert.strictEqual(status.data.active, null);
     const { evidence, toolResult } = await searchEvidence('青色灯塔的守塔人是谁', bookA.id);
     assert.strictEqual(evidence.length, 0);
-    assert.ok(toolResult && ['empty', 'ok'].includes(toolResult.status));
+    assert.ok(toolResult && ['empty', 'ok', 'unavailable'].includes(toolResult.status));
 });
 
 test('KNN 范围过滤微实验（内存库复现）', () => {

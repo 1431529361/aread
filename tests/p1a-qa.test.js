@@ -89,12 +89,32 @@ test('A-T05 选文足够（explain）不强制检索', async () => {
     assert.strictEqual(end.data.status, 'completed');
 });
 
+test('A-T09 选文注入模型上下文：user 消息含选中原文，落库正文不重复', async () => {
+    await fake.reset();
+    const selText = '海边有一座青色灯塔';
+    const stream = await ask({ question: '解释这段话', bookId: book.id, selection: { text: selText }, action: 'explain' });
+    assert.strictEqual(stream.events.find(e => e.type === 'end').data.status, 'completed');
+    const chatReqs = fake.requests.filter(r => r.path.endsWith('/chat/completions'));
+    assert.ok(chatReqs.length >= 1, '应有模型调用');
+    const lastUser = [...chatReqs[0].body.messages].reverse().find(m => m.role === 'user');
+    assert.ok(lastUser.content.includes('【用户选中文本】'), '模型须看到选文标记');
+    assert.ok(lastUser.content.includes(selText), '模型须看到选中原文');
+    const convId = stream.events.find(e => e.type === 'start').data.conversationId;
+    const userMessageId = stream.events.find(e => e.type === 'start').data.userMessageId;
+    const msgs = await api(srv.url, `/api/conversations/${convId}/messages`, { token: user.token });
+    const um = msgs.data.messages.find(m => m.id === userMessageId);
+    assert.strictEqual(um.content, '解释这段话', '落库正文不含注入块');
+    assert.strictEqual(um.metadata.selection.text, selText);
+});
+
 test('A-T06 需取证但无证据→缺证说明，不冒充原文', async () => {
     await fake.reset();
     // 无索引、无工具调用 → 服务端补查也无命中 → insufficient_evidence
     const stream = await ask({ question: '书中某个不存在的事实', bookId: book.id });
-    const as = stream.events.find(e => e.type === 'answer_start');
+    // 流式协议下首个 answer_start 可能是暂定直答；缺证门控后收回并重发
+    const as = [...stream.events].reverse().find(e => e.type === 'answer_start');
     assert.strictEqual(as.data.answerKind, 'insufficient_evidence');
+    assert.ok(stream.events.some(e => e.type === 'answer_retract'), '暂定直答应被收回');
     const end = stream.events.find(e => e.type === 'end');
     assert.ok(end.data.assistantMessage.content.includes('证据'), '应明确缺证');
 });
