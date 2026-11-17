@@ -11,7 +11,8 @@
 - **文章目录**：自动生成章节目录，支持快速导航
 - **个性化设置**：
   - 字体大小调节（12px - 28px）
-  - 三种主题模式：明亮 / 暗黑 / 护眼
+  - 三种主题模式：纸白 / 夜读 / 护眼
+  - 正文衬线 / 无衬线字体切换
   - 选中文本浮动工具栏
 
 ### 💬 会话管理（按书隔离）
@@ -27,7 +28,7 @@
 
 ### 🤖 AI 智能问答
 
-- **全屏对话页**：替代底部半屏面板，主流 Agent 产品风格的消息气泡界面
+- **对话页**：桌面端阅读页右侧停靠，移动端全屏对话页，主流 Agent 产品风格的消息气泡界面
 - **快捷操作**：选中文本后弹出工具栏，支持解释说明、总结概括、翻译、扩展阅读
 - **自由提问**：无需选中文本也可直接提问，AI 结合书籍上下文回答
 - **流式输出**：SSE 流式传输，打字机效果，提升阅读体验
@@ -45,14 +46,18 @@
 - **RAG 检索增强**：为书籍建立智能索引，实现"全书级"问答
   - 章节边界 + 滑动窗口分块，分块与向量统一入库 `data.db`（sqlite-vec 扩展，1024 维）
   - **混合检索**：向量 KNN + BM25 关键词双路召回 → RRF 融合排序，默认返回 Top-5
+  - **可选重排序（Rerank）**：配置重排模型后对融合候选精排取 Top-K，未配置或失败自动跳过不影响检索
   - **多 Embedding 提供商**：阿里云（百炼/MaaS 专属端点，用户可配）、智谱 `embedding-3`、硅基流动 `bge-large-zh`，支持 auto 自动选择
   - 未配置向量化时自动降级纯 BM25，任一路检索失败不影响另一路
   - 已索引书籍显示模式徽标（`向量+BM25` / `仅BM25`），提供重建/删除选项
 - **Multi-Agent 任务编排**：复杂阅读任务自动拆解为子 Agent 并行执行
-  - 读书笔记生成：大纲 → 逐章并行摘要 → 批判性点评 → 整合输出
+  - 读书笔记生成：全书分层 map-reduce（无章节数上限，长章分块归纳）→ 批判性点评 → 整合层流式输出，原文金句逐字校验
+  - **章节摘要缓存**：按 书+内容hash+模型+章序 复用（`chapter_summaries` 表），重新生成只重跑整合层
   - 人物关系分析：人物检测 → 并行人物分析 → 关系图谱整合
   - DAG 拓扑排序并行调度，节点失败自动降级
+  - **先查看再显式生成**：入口优先展示已有结果，生成需显式确认；后台运行状态可见，失败留痕可重试
   - **结果持久化与复用**：生成后自动保存，再次点击直接展示历史结果，支持导出 Markdown / 查看阅读 / 重新生成
+  - 笔记任务关闭模型思考（`enable_thinking=false`），避免思考预算耗尽导致空答案/截断
   - LLM 调用自动重试（超时/限流退避重试，4xx 客户端错误不重试）
 - **安全防护**：最大 8 轮工具调用 + 单工具 5 次熔断，防止死循环；模型不支持 Function Calling 时自动降级为普通问答
 
@@ -75,6 +80,7 @@
 
 ### 🔧 自定义 AI 提供商
 
+- **提供商卡片列表**：设置页"模型服务"分区以卡片管理所有提供商，支持添加/编辑模态框、主流平台预设填充、内联模型切换、测试连接
 - **灵活添加**：支持添加任意 OpenAI 兼容 API
 - **Base URL 支持**：填写 Base URL（如 `https://dashscope.aliyuncs.com/compatible-mode/v1`），系统自动补全 `/chat/completions`
 - **模型管理**：可配置默认模型和可选模型列表
@@ -83,8 +89,10 @@
 
 ### 🎨 现代化 UI 设计
 
-- **全屏对话页**：主流 Agent 产品风格，消息气泡 + 内联 trace 折叠区
-- **卡片式布局**：圆角卡片、渐变背景、阴影层次
+- **松烟墨 × 朱砂设计系统**：纸白 / 夜读 / 护眼三主题，登录页品牌分栏
+- **桌面侧边栏导航**：设置子页分区（模型服务 / 智能索引 / 重排序 / 外观 / 账户）
+- **生成式书封**：书架以竖排书名 + 印章 + 阅读进度生成书封
+- **阅读页 AI 对话右侧停靠**（桌面端）；移动端为主流 Agent 产品风格的全屏对话页，消息气泡 + 内联 trace 折叠区
 - **流畅动画**：按钮悬浮效果、面板滑入、消息淡入
 - **统一滚动条**：自定义美化滚动条样式
 - **响应式设计**：适配不同屏幕尺寸，移动端安全区适配
@@ -107,7 +115,7 @@
 | 向量存储 | sqlite-vec（SQLite 嵌入式向量扩展，vec0 虚拟表） |
 | LLM 调用层 | 统一 Client：非流式/流式/工具调用 + 超时重试 + SSE 解析（[llm-client.js](llm-client.js)） |
 | Agent 引擎 | Function Calling + ReAct 循环（[agent.js](agent.js)）+ 工具自注册（[tools/](tools/index.js)） |
-| RAG 检索 | 向量 KNN + BM25 双路召回 → RRF 融合（[rag.js](rag.js)） |
+| RAG 检索 | 向量 KNN + BM25 双路召回 → RRF 融合 → 可选 Rerank 精排（[rag.js](rag.js) / [rerank.js](rerank.js)） |
 | 向量化 | 多 Embedding 提供商解析与调用（[embedding.js](embedding.js)） |
 | 多 Agent 编排 | DAG 拓扑排序并行调度（[orchestrator.js](orchestrator.js)） |
 | 会话管理 | 按书隔离 + 滚动摘要压缩 + 长期记忆（[conversation.js](conversation.js)） |
@@ -165,6 +173,9 @@ CUSTOM_API_KEY=your_custom_key
 EMBED_BASE_URL=          # OpenAI 兼容 Base URL，系统自动补全 /embeddings
 EMBED_MODEL_NAME=        # Embedding 模型名（需 1024 维输出，如 text-embedding-v4）
 EMBED_API_KEY=           # 阿里云 API Key
+
+# Rerank 重排序兜底密钥（可选，也可在前端"重排序"设置中按用户配置）
+RERANK_API_KEY=
 
 # 服务端口（默认 3000）
 PORT=3000
@@ -230,7 +241,7 @@ PORT=3000
 - 系统按章节边界 + 滑动窗口将全书分块，分块写入 `rag_chunks` 表
 - 已配置向量化时，分批调用 Embedding API 将向量写入 sqlite-vec 虚拟表 `rag_vec`（模式 `向量+BM25`）
 - 未配置向量化时自动降级为纯 BM25 模式，不阻塞建索引
-- 检索时向量 KNN 与 BM25 双路各取 Top-10，RRF（Reciprocal Rank Fusion）融合后返回 Top-5
+- 检索时向量 KNN 与 BM25 双路各取 Top-10，RRF（Reciprocal Rank Fusion）融合后返回 Top-5；配置重排序后对融合候选精排
 - 建立索引后，统一问答中的 `searchInBook` 工具会优先使用该索引
 
 > 查询时使用建库时记录的同一 Embedding 模型（存于 `rag_index_meta`）；若该提供商 Key 已删除，检索自动降级 BM25 不报错。
@@ -239,10 +250,10 @@ PORT=3000
 
 在书架的 TXT 书籍卡片上点击 **"读书笔记"** 按钮，或调用 `/api/agent/task` 接口：
 
-- **读书笔记生成**（`generate-notes`）：大纲 Agent → 逐章并行摘要 Agent → 点评 Agent → 整合 Agent，输出完整 Markdown 读书笔记
+- **读书笔记生成**（`generate-notes`）：全书分层 map-reduce（无章节数上限，长章分块归纳）→ 点评 Agent → 整合 Agent 流式输出，原文金句逐字校验；章节摘要按 书+内容hash+模型+章序 缓存，重新生成只重跑整合层
 - **人物关系分析**（`character-analysis`）：人物检测 Agent → 并行人物分析 Agent → 关系整合 Agent，输出人物关系图谱
 
-任务执行过程中，弹窗实时展示各子 Agent 的启动/进度/完成状态，最终结果以 Markdown 渲染呈现。
+入口遵循"先查看再显式生成"：已有结果直接展示，生成需显式确认；任务后台运行状态可见，失败留痕并支持重试。任务执行过程中，弹窗实时展示各子 Agent 的启动/进度/完成状态，最终结果以 Markdown 渲染呈现。
 
 ### Agent 工具说明
 
@@ -360,7 +371,7 @@ module.exports = {
 
 | taskType | 任务 | DAG 节点 |
 |----------|------|----------|
-| `generate-notes` | 读书笔记生成 | 大纲 → 并行摘要 → 点评 → 整合 |
+| `generate-notes` | 读书笔记生成 | 全书分层 map-reduce（长章分块）→ 点评 → 整合（流式） |
 | `character-analysis` | 人物关系分析 | 人物检测 → 并行分析 → 关系整合 |
 
 ### 密钥管理
@@ -376,7 +387,7 @@ module.exports = {
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/providers` | 获取可用提供商列表和模型 |
+| GET | `/api/providers` | 获取可用提供商列表和模型（自定义提供商含 `apiEndpoint` 回显） |
 | POST | `/api/providers` | 添加自定义提供商 |
 | PUT | `/api/providers/:id` | 更新自定义提供商 |
 | DELETE | `/api/providers/:id` | 删除自定义提供商 |
@@ -388,6 +399,14 @@ module.exports = {
 | GET | `/api/embedding-settings` | 获取当前向量化提供商选择及各提供商 Key 配置状态 |
 | PUT | `/api/embedding-settings` | 保存向量化设置（provider + 阿里云 Base URL/模型/Key，保存时实调接口校验） |
 | DELETE | `/api/embedding-settings/aliyun-key` | 删除阿里云 Embedding 密钥 |
+
+### Rerank 重排序设置
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/rerank-settings` | 获取重排开关/Base URL/模型/topN、密钥状态与当前生效配置 |
+| PUT | `/api/rerank-settings` | 保存重排设置（新密钥保存时实调接口校验） |
+| DELETE | `/api/rerank-settings/key` | 删除重排密钥 |
 
 ### 书籍管理
 
@@ -418,6 +437,7 @@ trae02airead/
 │   ├── get-chapter-info.js# 章节定位工具
 │   └── lookup-character.js# 人物查找工具
 ├── rag.js                 # RAG 检索增强（分块入库 + 向量/BM25 双路召回 + RRF 融合）
+├── rerank.js              # Rerank 重排序（可选精排，设置解析/密钥校验/调用）
 ├── embedding.js           # Embedding 提供商解析与调用（阿里云/智谱/硅基流动）
 ├── text-utils.js          # 文本处理工具（章节切分/截断）
 ├── orchestrator.js        # Multi-Agent DAG 编排引擎
@@ -439,7 +459,7 @@ trae02airead/
 └── node_modules/          # 依赖包
 ```
 
-> **数据表说明**：RAG 相关数据全部存于 `data.db`：`rag_chunks`（分块文本）、`rag_vec`（sqlite-vec 向量虚拟表）、`rag_index_meta`（建库模式/模型/维度）、`user_settings`（向量化提供商选择）。旧版 `rag_index/` JSON 文件索引已退役，旧书重建索引即可迁移。
+> **数据表说明**：RAG 相关数据全部存于 `data.db`：`rag_chunks`（分块文本）、`rag_vec`（sqlite-vec 向量虚拟表）、`rag_index_meta`（建库模式/模型/维度）、`user_settings`（向量化提供商选择）、`chapter_summaries`（读书笔记章节摘要缓存，按 书+内容hash+模型+章序 复用）。旧版 `rag_index/` JSON 文件索引已退役，旧书重建索引即可迁移。
 
 ## 安全说明
 
